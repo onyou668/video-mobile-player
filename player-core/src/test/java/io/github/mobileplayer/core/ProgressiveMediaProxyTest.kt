@@ -77,6 +77,21 @@ class ProgressiveMediaProxyTest {
     }
 
     @Test
+    fun cacheConfigurationLimitsProgressiveExtensions() {
+        withTempDirectory { directory ->
+            ProgressiveMediaProxy(
+                baseDirectory = directory,
+                maxCacheBytes = 4L * 1024L * 1024L,
+                config = VideoCacheConfig(cacheableExtensions = setOf("mp4")),
+            ).use { proxy ->
+                assertTrue(proxy.supportsContentCaching(VideoSource.network("https://example.com/a.mp4")))
+                assertFalse(proxy.supportsContentCaching(VideoSource.network("https://example.com/a.mov")))
+                assertFalse(proxy.supportsContentCaching(VideoSource.network("https://example.com/a.m3u8")))
+            }
+        }
+    }
+
+    @Test
     fun requestedSegmentsPersistAndAreReusedAcrossProxyInstances() {
         val segmentSize = ProgressiveMediaProxy.DEFAULT_SEGMENT_SIZE_BYTES
         val content = ByteArray((segmentSize * 2L + 257L).toInt()) { index ->

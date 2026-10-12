@@ -309,6 +309,8 @@ class VideoPlayerControllerTest {
 
         override fun getProgress(mediaId: String): PlaybackProgress? = progress[mediaId]
 
+        override fun getAllProgress(): List<PlaybackProgress> = progress.values.toList()
+
         override fun saveProgress(progress: PlaybackProgress) {
             this.progress[progress.mediaId] = progress
         }

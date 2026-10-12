@@ -73,6 +73,23 @@ dependencies {
 
 `VideoPlayerHost` 就是对外提供的播放器窗口，只占用宿主指定的区域。库不实现详情、评论、剧集列表、推荐或导航页面。点击窗口内的全屏按钮后，组件自动把同一播放会话迁移到横屏沉浸式全屏，退出后回到宿主原先分配的区域。
 
+对于新接入代码，推荐按媒体画幅选择 `PortraitVideoPlayer` 或
+`LandscapeVideoPlayer`。前者只提供竖版播放，不包含全屏切换；后者由外部持有
+`isFullscreen`，组件通过 `onFullscreenChange` 请求切换，并负责 Activity 横屏、全屏窗口和系统栏处理：
+
+```kotlin
+var isFullscreen by rememberSaveable { mutableStateOf(false) }
+
+LandscapeVideoPlayer(
+    controller = player,
+    source = source,
+    isFullscreen = isFullscreen,
+    onFullscreenChange = { isFullscreen = it },
+)
+```
+
+两个组件始终使用同一个 `VideoPlayerController`；横竖屏迁移不会重新创建播放会话。
+
 ```kotlin
 @Composable
 fun PlayerWindow(
@@ -178,7 +195,9 @@ val source = VideoSource.local(
 
 ## 播放进度与内容缓存
 
-缓存通过 `VideoPlayerCache` 接口注入 Controller。默认的 `AppPrivateVideoPlayerCache` 将进度保存在应用私有 `SharedPreferences`，将网络视频分段放在应用私有 `filesDir`。这些文件不会被 Android 当作临时缓存自动清理；调用 `remove()`/`clear()`、清除 App 数据或卸载 App 时才会丢失，超过配置上限时按最近最少使用的分段淘汰。
+缓存通过 `VideoPlayerCache` 接口注入 Controller。默认装配会创建启用内容缓存的
+`AppPrivateVideoPlayerCache`：进度保存在应用私有 `SharedPreferences`，网络视频分段放在应用私有 `filesDir`。
+这些文件不会被 Android 当作临时缓存自动清理；调用 `remove()`/`clear()`、清除 App 数据或卸载 App 时才会丢失，超过配置上限时按最近最少使用的分段淘汰。
 
 ```kotlin
 class PlayerApplication : Application() {
@@ -225,6 +244,8 @@ Controller 在播放过程中每 5 秒节流保存一次，并在暂停、Seek�
 
 ```kotlin
 val progress = cache.getProgress(source.mediaId)
+val progressByUrl = cache.getProgressByUrl(videoUrl)
+val history = cache.getAllProgress()
 cache.saveProgress(
     PlaybackProgress(source.mediaId, positionMs = 30_000L, durationMs = 120_000L),
 )
@@ -240,6 +261,20 @@ viewModelScope.launch {
 ```
 
 本地 `content://`/文件资源只保存播放进度，不复制视频内容。普通网络 MP4 等渐进式单文件在播放时自动经过读穿代理：命中的 512 KiB 分段直接从本地读取，缺失分段通过上游 HTTP Range 请求边传给播放器边写入磁盘。拖动到未缓存位置时只下载新位置对应的分段；再次打开时已有分段可直接播放，缺失部分继续从网络补齐。
+
+内容缓存默认开启，但可以通过 `VideoCacheConfig` 关闭或限制后缀：
+
+```kotlin
+val cache = AppPrivateVideoPlayerCache(
+    context = application,
+    config = VideoCacheConfig(
+        enabled = true,
+        cacheableExtensions = setOf("mp4", "m4v"),
+    ),
+)
+```
+
+进度保存不受内容缓存开关影响。后缀不在允许列表、服务器不支持 HTTP Range，或资源是本地文件时，播放器会继续播放但不写入媒体内容缓存。
 
 默认目录规则如下，业务不应直接依赖或修改内部文件：
 

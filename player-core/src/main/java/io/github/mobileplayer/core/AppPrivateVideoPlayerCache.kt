@@ -18,6 +18,7 @@ import java.io.File
 class AppPrivateVideoPlayerCache(
     context: Context,
     maxMediaCacheBytes: Long = DEFAULT_MAX_MEDIA_CACHE_BYTES,
+    private val config: VideoCacheConfig = VideoCacheConfig(),
 ) : VideoPlayerCache, AutoCloseable {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(
@@ -28,6 +29,7 @@ class AppPrivateVideoPlayerCache(
     private val mediaProxy = ProgressiveMediaProxy(
         baseDirectory = mediaDirectory,
         maxCacheBytes = maxMediaCacheBytes,
+        config = config,
     )
 
     init {
@@ -37,16 +39,25 @@ class AppPrivateVideoPlayerCache(
     override fun getProgress(mediaId: String): PlaybackProgress? {
         if (mediaId.isBlank()) return null
         val encoded = preferences.getString(progressKey(mediaId), null) ?: return null
-        return runCatching {
-            val json = JSONObject(encoded)
-            PlaybackProgress(
-                mediaId = json.getString("mediaId"),
-                positionMs = json.getLong("positionMs"),
-                durationMs = json.optLong("durationMs", 0L),
-                updatedAtEpochMs = json.optLong("updatedAtEpochMs", 0L),
-            )
-        }.getOrNull()
+        return decodeProgress(encoded)
     }
+
+    override fun getAllProgress(): List<PlaybackProgress> = preferences.all.keys
+        .asSequence()
+        .filter { it.startsWith(PROGRESS_PREFIX) }
+        .mapNotNull { key -> preferences.getString(key, null)?.let(::decodeProgress) }
+        .sortedByDescending(PlaybackProgress::updatedAtEpochMs)
+        .toList()
+
+    private fun decodeProgress(encoded: String): PlaybackProgress? = runCatching {
+        val json = JSONObject(encoded)
+        PlaybackProgress(
+            mediaId = json.getString("mediaId"),
+            positionMs = json.getLong("positionMs"),
+            durationMs = json.optLong("durationMs", 0L),
+            updatedAtEpochMs = json.optLong("updatedAtEpochMs", 0L),
+        )
+    }.getOrNull()
 
     override fun saveProgress(progress: PlaybackProgress) {
         val json = JSONObject()
@@ -65,9 +76,7 @@ class AppPrivateVideoPlayerCache(
         onProgress: (MediaCacheProgress) -> Unit,
     ): VideoSource {
         if (source.type == VideoSource.Type.LOCAL) return source
-        require(mediaProxy.supportsContentCaching(source)) {
-            "Content caching requires an HTTP progressive file with caching enabled"
-        }
+        if (!mediaProxy.supportsContentCaching(source)) return source
         return withContext(Dispatchers.IO) {
             mediaProxy.prefetch(source, onProgress)
         }

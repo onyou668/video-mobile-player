@@ -1,8 +1,5 @@
 package io.github.mobileplayer.core
 
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
-
 /**
  * A media location understood by every engine.
  *
@@ -17,8 +14,11 @@ data class VideoSource internal constructor(
     val headers: Map<String, String> = emptyMap(),
     val title: String? = null,
     /** Stable opaque identifier generated from the source type and URI. */
-    val mediaId: String = generateMediaId(uri, type),
-    /** Controls whether progressive network bytes may be persisted locally. */
+    val mediaId: String = when (type) {
+        Type.LOCAL -> MediaIdGenerator.forLocalUri(uri)
+        Type.NETWORK -> MediaIdGenerator.forNetworkUrl(uri)
+    },
+    /** Controls whether the configured cache may persist progressive network bytes. */
     val contentCachePolicy: ContentCachePolicy = ContentCachePolicy.AUTO,
 ) {
     init {
@@ -32,7 +32,7 @@ data class VideoSource internal constructor(
     }
 
     enum class ContentCachePolicy {
-        /** Cache HTTP range requests except known HLS/DASH manifest URLs. */
+        /** Try content caching when the global cache policy and source allow it. */
         AUTO,
 
         /** Bypass content caching while still persisting playback progress. */
@@ -62,11 +62,5 @@ data class VideoSource internal constructor(
             contentCachePolicy = contentCachePolicy,
         )
 
-        private fun generateMediaId(uri: String, type: Type): String {
-            val identity = "${type.name}:$uri"
-            return MessageDigest.getInstance("SHA-256")
-                .digest(identity.toByteArray(StandardCharsets.UTF_8))
-                .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
-        }
     }
 }

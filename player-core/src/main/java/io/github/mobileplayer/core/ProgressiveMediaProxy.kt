@@ -30,6 +30,7 @@ import kotlin.math.min
 internal class ProgressiveMediaProxy(
     private val baseDirectory: File,
     private val maxCacheBytes: Long,
+    private val config: VideoCacheConfig = VideoCacheConfig(),
     private val segmentSizeBytes: Long = DEFAULT_SEGMENT_SIZE_BYTES,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
@@ -59,12 +60,16 @@ internal class ProgressiveMediaProxy(
     }
 
     fun supportsContentCaching(source: VideoSource): Boolean {
+        if (!config.enabled) return false
         if (source.type != VideoSource.Type.NETWORK) return false
         if (source.contentCachePolicy == VideoSource.ContentCachePolicy.DISABLED) return false
         val uri = runCatching { URI(source.uri) }.getOrNull() ?: return false
         if (uri.scheme?.lowercase(Locale.US) !in setOf("http", "https")) return false
-        val path = uri.path.orEmpty().lowercase(Locale.US)
-        return !path.endsWith(".m3u8") && !path.endsWith(".mpd")
+        val path = uri.path.orEmpty()
+        val extension = path.substringAfterLast('.', "").lowercase(Locale.US)
+        if (extension == "m3u8" || extension == "mpd") return false
+        return extension.isNotBlank() && extension in config.normalizedExtensions ||
+            extension.isBlank() && config.allowUnknownExtension
     }
 
     fun playbackSource(source: VideoSource): VideoSource? {

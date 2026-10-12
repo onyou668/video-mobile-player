@@ -26,6 +26,22 @@ data class MediaCacheProgress(
             ?.let { (bytesCached.toFloat() / it).coerceIn(0f, 1f) }
 }
 
+data class VideoCacheConfig(
+    val enabled: Boolean = true,
+    val cacheableExtensions: Set<String> = setOf("mp4", "m4v", "mov", "webm"),
+    val allowUnknownExtension: Boolean = false,
+) {
+    init {
+        require(cacheableExtensions.none { it.isBlank() || it.any { character -> character.isWhitespace() } }) {
+            "Cacheable extensions must be non-blank and contain no whitespace"
+        }
+    }
+
+    val normalizedExtensions: Set<String> = cacheableExtensions
+        .map { it.removePrefix(".").lowercase() }
+        .toSet()
+}
+
 /**
  * Engine-neutral cache seam used by [VideoPlayerController].
  *
@@ -36,6 +52,14 @@ data class MediaCacheProgress(
  */
 interface VideoPlayerCache {
     fun getProgress(mediaId: String): PlaybackProgress?
+
+    fun getProgressByUrl(url: String): PlaybackProgress? =
+        getProgress(MediaIdGenerator.forNetworkUrl(url))
+
+    fun getProgressBySource(source: VideoSource): PlaybackProgress? =
+        getProgress(source.mediaId)
+
+    fun getAllProgress(): List<PlaybackProgress> = emptyList()
 
     fun saveProgress(progress: PlaybackProgress)
 

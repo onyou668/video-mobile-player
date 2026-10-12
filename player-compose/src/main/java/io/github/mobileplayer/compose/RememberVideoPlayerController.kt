@@ -9,7 +9,9 @@ import androidx.compose.ui.platform.LocalContext
 import io.github.mobileplayer.core.PlaybackEngineFactory
 import io.github.mobileplayer.core.PlayerEngineType
 import io.github.mobileplayer.core.PlaybackProgressPolicy
+import io.github.mobileplayer.core.AppPrivateVideoPlayerCache
 import io.github.mobileplayer.core.VideoPlayerCache
+import io.github.mobileplayer.core.VideoCacheConfig
 import io.github.mobileplayer.core.VideoPlayerController
 import io.github.mobileplayer.ijk.IjkPlaybackEngineFactory
 import io.github.mobileplayer.media3.Media3PlaybackEngineFactory
@@ -24,9 +26,14 @@ fun createDefaultVideoPlayerController(
     scope: CoroutineScope,
     initialEngine: PlayerEngineType = PlayerEngineType.MEDIA3,
     cache: VideoPlayerCache? = null,
+    cacheConfig: VideoCacheConfig = VideoCacheConfig(),
     progressPolicy: PlaybackProgressPolicy = PlaybackProgressPolicy(),
 ): VideoPlayerController {
     val appContext = context.applicationContext
+    val effectiveCache = cache ?: AppPrivateVideoPlayerCache(
+        context = appContext,
+        config = cacheConfig,
+    )
     return VideoPlayerController(
         initialEngine = initialEngine,
         factories = mapOf<PlayerEngineType, PlaybackEngineFactory>(
@@ -34,7 +41,7 @@ fun createDefaultVideoPlayerController(
             PlayerEngineType.IJK to IjkPlaybackEngineFactory(appContext),
         ),
         scope = scope,
-        cache = cache,
+        cache = effectiveCache,
         progressPolicy = progressPolicy,
     )
 }
@@ -44,16 +51,18 @@ fun createDefaultVideoPlayerController(
 fun rememberVideoPlayerController(
     initialEngine: PlayerEngineType = PlayerEngineType.MEDIA3,
     cache: VideoPlayerCache? = null,
+    cacheConfig: VideoCacheConfig = VideoCacheConfig(),
     progressPolicy: PlaybackProgressPolicy = PlaybackProgressPolicy(),
 ): VideoPlayerController {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
-    val controller = remember(initialEngine, context, scope, cache, progressPolicy) {
+    val controller = remember(initialEngine, context, scope, cache, cacheConfig, progressPolicy) {
         createDefaultVideoPlayerController(
             context = context,
             scope = scope,
             initialEngine = initialEngine,
             cache = cache,
+            cacheConfig = cacheConfig,
             progressPolicy = progressPolicy,
         )
     }

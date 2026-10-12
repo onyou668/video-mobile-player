@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PictureInPictureAlt
@@ -91,6 +92,8 @@ fun VideoPlayer(
     colors: VideoPlayerColors = VideoPlayerColors(),
     presentationController: PlayerPresentationController? = null,
     onFullscreenRequest: (() -> Unit)? = null,
+    onFullscreenChangeRequest: ((Boolean) -> Unit)? = null,
+    isFullscreen: Boolean = false,
     overlayContent: @Composable BoxScope.(PlaybackState) -> Unit = {},
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
@@ -195,6 +198,8 @@ fun VideoPlayer(
                 },
                 onClose = { presentationController?.requestClose() },
                 onFullscreenRequest = onFullscreenRequest,
+                onFullscreenChangeRequest = onFullscreenChangeRequest,
+                isFullscreen = isFullscreen,
             )
         }
     }
@@ -277,6 +282,8 @@ private fun PlayerControls(
     onRequestPresentationMode: (PlayerPresentationMode) -> Unit,
     onClose: () -> Unit,
     onFullscreenRequest: (() -> Unit)?,
+    onFullscreenChangeRequest: ((Boolean) -> Unit)?,
+    isFullscreen: Boolean,
 ) {
     var scrubbing by remember { mutableStateOf(false) }
     var scrubPosition by remember { mutableFloatStateOf(0f) }
@@ -450,14 +457,23 @@ private fun PlayerControls(
                     onInteraction = onInteraction,
                     onRequestMode = onRequestPresentationMode,
                 )
-            } else if (onFullscreenRequest != null) {
+            } else if (onFullscreenChangeRequest != null || (!isFullscreen && onFullscreenRequest != null)) {
                 IconButton(
                     onClick = {
                         onInteraction()
-                        onFullscreenRequest()
+                        onFullscreenChangeRequest?.invoke(!isFullscreen)
+                            ?: onFullscreenRequest?.invoke()
                     },
                 ) {
-                    Icon(Icons.Default.Fullscreen, strings.fullscreen, tint = colors.controlsContent)
+                    Icon(
+                        imageVector = if (isFullscreen) {
+                            Icons.Default.FullscreenExit
+                        } else {
+                            Icons.Default.Fullscreen
+                        },
+                        contentDescription = if (isFullscreen) strings.portrait else strings.fullscreen,
+                        tint = colors.controlsContent,
+                    )
                 }
             }
         }

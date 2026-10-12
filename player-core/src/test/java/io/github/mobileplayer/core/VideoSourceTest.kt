@@ -38,4 +38,14 @@ class VideoSourceTest {
 
         assertEquals(first.mediaId, second.mediaId)
     }
+
+    @Test
+    fun networkUrlHelpersUseTheSameMediaIdentity() {
+        val url = "https://example.com/movie.mp4"
+
+        assertEquals(
+            VideoSource.network(url).mediaId,
+            MediaIdGenerator.forNetworkUrl(url),
+        )
+    }
 }
