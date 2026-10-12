@@ -8,14 +8,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import io.github.mobileplayer.core.PlaybackEngineFactory
 import io.github.mobileplayer.core.PlayerEngineType
-import io.github.mobileplayer.core.PlaybackProgressPolicy
 import io.github.mobileplayer.core.AppPrivateVideoPlayerCache
-import io.github.mobileplayer.core.VideoPlayerCache
+import io.github.mobileplayer.core.VideoContentCache
 import io.github.mobileplayer.core.VideoCacheConfig
 import io.github.mobileplayer.core.VideoPlayerController
 import io.github.mobileplayer.ijk.IjkPlaybackEngineFactory
 import io.github.mobileplayer.media3.Media3PlaybackEngineFactory
 import kotlinx.coroutines.CoroutineScope
+import java.io.File
 
 /**
  * Creates a controller whose lifetime is owned by the caller. Use this from a
@@ -25,14 +25,15 @@ fun createDefaultVideoPlayerController(
     context: Context,
     scope: CoroutineScope,
     initialEngine: PlayerEngineType = PlayerEngineType.MEDIA3,
-    cache: VideoPlayerCache? = null,
+    cache: VideoContentCache? = null,
     cacheConfig: VideoCacheConfig = VideoCacheConfig(),
-    progressPolicy: PlaybackProgressPolicy = PlaybackProgressPolicy(),
+    cacheDirectory: File? = null,
 ): VideoPlayerController {
     val appContext = context.applicationContext
     val effectiveCache = cache ?: AppPrivateVideoPlayerCache(
         context = appContext,
         config = cacheConfig,
+        cacheDirectory = cacheDirectory,
     )
     return VideoPlayerController(
         initialEngine = initialEngine,
@@ -42,7 +43,7 @@ fun createDefaultVideoPlayerController(
         ),
         scope = scope,
         cache = effectiveCache,
-        progressPolicy = progressPolicy,
+        ownedCache = if (cache == null) effectiveCache as AutoCloseable else null,
     )
 }
 
@@ -50,20 +51,20 @@ fun createDefaultVideoPlayerController(
 @Composable
 fun rememberVideoPlayerController(
     initialEngine: PlayerEngineType = PlayerEngineType.MEDIA3,
-    cache: VideoPlayerCache? = null,
+    cache: VideoContentCache? = null,
     cacheConfig: VideoCacheConfig = VideoCacheConfig(),
-    progressPolicy: PlaybackProgressPolicy = PlaybackProgressPolicy(),
+    cacheDirectory: File? = null,
 ): VideoPlayerController {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
-    val controller = remember(initialEngine, context, scope, cache, cacheConfig, progressPolicy) {
+    val controller = remember(initialEngine, context, scope, cache, cacheConfig, cacheDirectory) {
         createDefaultVideoPlayerController(
             context = context,
             scope = scope,
             initialEngine = initialEngine,
             cache = cache,
             cacheConfig = cacheConfig,
-            progressPolicy = progressPolicy,
+            cacheDirectory = cacheDirectory,
         )
     }
 

@@ -9,12 +9,10 @@
 | 网络视频 | 已支持 | HTTP/HTTPS、Media3 HLS/DASH、请求头 |
 | 本地视频 | 已支持 | 推荐使用 `content://` URI |
 | Media3/Ijk 切换 | 已支持 | 保留视频源、进度、播放意图、音量、倍速和 Surface |
-| 页面内竖屏播放 | 已支持 | `INLINE` 展示模式 |
-| 横屏全屏播放 | 已支持 | `VideoPlayerHost` 自动横屏、沉浸式全屏并返回页面内原位置 |
-| PiP/系统悬浮窗 | 已支持协议 | 宿主负责系统 API、权限和前台 Service |
-| 悬浮窗返回原模式 | 已支持 | 自动记住进入悬浮窗前的页面内或全屏模式 |
+| 竖屏播放 | 已支持 | `PortraitVideoPlayer` 固定竖屏，不提供全屏切换 |
+| 横屏/全屏播放 | 已支持 | `LandscapeVideoPlayer` 由外部控制 `isFullscreen`，组件负责横屏窗口和系统栏 |
 | 网络加载速度 | 已支持 | 准备或缓冲时显示 `B/s`、`KB/s`、`MB/s` |
-| 播放进度持久化 | 已支持 | 根据来源类型与 URI 自动生成稳定 ID，自动恢复并节流保存，双内核共用 |
+| 播放进度 | 外部管理 | 宿主保存 `PlaybackState.positionMs`，通过 `startPositionMs` 恢复 |
 | 网络内容缓存 | 已支持 | 渐进式文件边播边存、按 Range 分段复用，Media3/Ijk 共用 |
 | 自定义弹幕覆盖层 | 已预留 | 使用 `overlayContent` slot，页面内和全屏共用，详见 [EXTENDING.md](EXTENDING.md) |
 | MediaSession/音频焦点 | 尚未内置 | 建议由后续后台播放模块统一接入 |
@@ -26,12 +24,12 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| `player-core` | 视频源、统一状态、内核接口、播放控制、进度与内容缓存、展示模式协议 |
+| `player-core` | 视频源、统一状态、内核接口、播放控制和内容缓存 |
 | `player-engine-media3` | Media3 ExoPlayer 适配器 |
 | `player-engine-ijk` | IjkPlayer 适配器及多 ABI 原生库 |
-| `player-compose` | 页面内/全屏 Host、Surface 生命周期、默认控制 UI 和双内核默认装配 |
+| `player-compose` | 竖屏/横屏播放器组件、Surface 生命周期、默认控制 UI 和双内核默认装配 |
 
-依赖方向固定为 `player-compose -> engine -> core`。`VideoPlayerHost` 提供默认横屏全屏实现；播放内核不负责 Activity 方向、PiP 权限或业务页面导航。
+依赖方向固定为 `player-compose -> engine -> core`。播放内核不负责 Activity 方向、权限或业务页面导航。
 
 更详细的模块说明见 [ARCHITECTURE.md](ARCHITECTURE.md)，扩展方式见 [EXTENDING.md](EXTENDING.md)。
 
@@ -71,9 +69,7 @@ dependencies {
 
 ## 可嵌入的播放器窗口
 
-`VideoPlayerHost` 就是对外提供的播放器窗口，只占用宿主指定的区域。库不实现详情、评论、剧集列表、推荐或导航页面。点击窗口内的全屏按钮后，组件自动把同一播放会话迁移到横屏沉浸式全屏，退出后回到宿主原先分配的区域。
-
-对于新接入代码，推荐按媒体画幅选择 `PortraitVideoPlayer` 或
+库只提供按媒体画幅选择的 `PortraitVideoPlayer` 或
 `LandscapeVideoPlayer`。前者只提供竖版播放，不包含全屏切换；后者由外部持有
 `isFullscreen`，组件通过 `onFullscreenChange` 请求切换，并负责 Activity 横屏、全屏窗口和系统栏处理：
 
@@ -89,20 +85,6 @@ LandscapeVideoPlayer(
 ```
 
 两个组件始终使用同一个 `VideoPlayerController`；横竖屏迁移不会重新创建播放会话。
-
-```kotlin
-@Composable
-fun PlayerWindow(
-    controller: VideoPlayerController,
-    video: HostVideo,
-) {
-    VideoPlayerHost(
-        controller = controller,
-        url = video.url,
-        title = video.title,
-    )
-}
-```
 
 默认 `modifier` 会占满可用宽度并按 16:9 计算高度，适合放在详情页顶部。宿主有其他画幅时可以传自己的 `Modifier` 覆盖；进入全屏后组件始终使用整个窗口，不受页面内尺寸约束。
 
@@ -133,9 +115,7 @@ class HostPlayerViewModel(application: Application) : AndroidViewModel(applicati
 
 @Composable
 fun PlayerWindow(viewModel: HostPlayerViewModel) {
-    VideoPlayerHost(
-        controller = viewModel.player,
-    )
+    PortraitVideoPlayer(controller = viewModel.player)
 }
 ```
 
@@ -143,7 +123,7 @@ fun PlayerWindow(viewModel: HostPlayerViewModel) {
 
 | 调用 | 用途 |
 | --- | --- |
-| `setMedia(source, playWhenReady)` | 切换播放地址和标题，并自动恢复该资源的进度 |
+| `setMedia(source, playWhenReady, startPositionMs)` | 切换播放地址和标题，并使用宿主传入的起始位置 |
 | `play()` / `pause()` / `togglePlayPause()` | 播放控制 |
 | `seekTo()` / `seekBy()` | 进度控制 |
 | `switchEngine()` | 外部切换 Media3/Ijk，保留当前进度和播放意图 |
@@ -191,13 +171,13 @@ val source = VideoSource.local(
 
 如果 App 重启后仍要访问该 URI，选择文件时需要调用 `takePersistableUriPermission`。播放器库不会主动申请广泛存储权限。
 
-调用方不传 `mediaId`。播放器使用“来源类型 + 完整 URI”的 SHA-256 自动生成稳定、不透明的 `mediaId`，标题和请求头变化不会改变它。相同 URI 在 App 重启后仍会命中同一份进度和网络内容缓存；URL 本身变化则视为新资源。
+调用方不传 `mediaId`。播放器使用“来源类型 + 完整 URI”的 SHA-256 自动生成稳定、不透明的 `mediaId`，标题和请求头变化不会改变它。相同 URI 在 App 重启后仍会命中同一份网络内容缓存；URL 本身变化则视为新资源。
 
 ## 播放进度与内容缓存
 
-缓存通过 `VideoPlayerCache` 接口注入 Controller。默认装配会创建启用内容缓存的
-`AppPrivateVideoPlayerCache`：进度保存在应用私有 `SharedPreferences`，网络视频分段放在应用私有 `filesDir`。
-这些文件不会被 Android 当作临时缓存自动清理；调用 `remove()`/`clear()`、清除 App 数据或卸载 App 时才会丢失，超过配置上限时按最近最少使用的分段淘汰。
+缓存通过 `VideoContentCache` 接口注入 Controller。默认装配会创建启用内容缓存的
+`AppPrivateVideoPlayerCache`，网络视频分段放在应用私有 `filesDir`。进度由宿主单独保存，推荐使用独立的 `PlaybackProgressStore`。
+缓存文件不会被 Android 当作临时缓存自动清理；调用 `remove()`/`clear()`、清除 App 数据或卸载 App 时才会丢失，超过配置上限时按最近最少使用的分段淘汰。
 
 ```kotlin
 class PlayerApplication : Application() {
@@ -205,17 +185,19 @@ class PlayerApplication : Application() {
         AppPrivateVideoPlayerCache(
             context = this,
             maxMediaCacheBytes = 512L * 1024L * 1024L,
+            // 可选：任意应用私有目录，mediaId 算法保持不变。
+            cacheDirectory = File(filesDir, "video-cache"),
         )
     }
 }
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
-    val cache = (application as PlayerApplication).videoPlayerCache
+    val videoCache = (application as PlayerApplication).videoPlayerCache
 
     val player = createDefaultVideoPlayerController(
         context = application,
         scope = viewModelScope,
-        cache = cache,
+        cache = videoCache,
     )
 }
 ```
@@ -236,17 +218,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
 宿主在 `<application android:networkSecurityConfig="@xml/network_security_config">` 中引用该文件；已有配置时只合并上述 domain，不要替换其他证书或域名策略。
 
-加载资源时，Controller 自动读取 `VideoPlayerCache` 中生成 ID 对应的进度；没有记录时从 `0L` 开始。调用方不传起始进度，播放过程中的主动跳转仍使用 `seekTo()`/`seekBy()`。
+加载资源时，Controller 使用调用方传入的 `startPositionMs`，默认从 `0L` 开始。播放过程中宿主可以从 `PlaybackState` 获取当前位置并按业务节流保存；切换内核和全屏不会改变该状态。
 
-Controller 在播放过程中每 5 秒节流保存一次，并在暂停、Seek、切换资源、切换内核、宿主停止和关闭时强制保存。Media3 与 IjkPlayer 始终读取同一个 Controller 状态和同一个 `mediaId` 记录，不会产生两份进度。接近视频结尾 5 秒的记录默认视为已播完，下次从头开始；可通过 `PlaybackProgressPolicy` 调整。
-
-外部模块也可以直接操作缓存：
+外部模块分别操作进度存储和媒体缓存：
 
 ```kotlin
-val progress = cache.getProgress(source.mediaId)
-val progressByUrl = cache.getProgressByUrl(videoUrl)
-val history = cache.getAllProgress()
-cache.saveProgress(
+val progressStore: PlaybackProgressStore = TODO("由宿主实现")
+val videoCache: VideoContentCache = (application as PlayerApplication).videoPlayerCache
+val progress = progressStore.getProgress(source.mediaId)
+val progressByUrl = progressStore.getProgressByUrl(videoUrl)
+val history = progressStore.getAllProgress()
+progressStore.saveProgress(
     PlaybackProgress(source.mediaId, positionMs = 30_000L, durationMs = 120_000L),
 )
 
@@ -255,18 +237,19 @@ viewModelScope.launch {
     player.cacheMedia(source) { download ->
         val fraction = download.fraction
     }
-    cache.remove(source.mediaId) // 同时删除该资源的进度和内容
-    cache.clear()                // 清空全部进度和内容
+    videoCache.remove(source.mediaId)
+    videoCache.clear()
 }
 ```
 
-本地 `content://`/文件资源只保存播放进度，不复制视频内容。普通网络 MP4 等渐进式单文件在播放时自动经过读穿代理：命中的 512 KiB 分段直接从本地读取，缺失分段通过上游 HTTP Range 请求边传给播放器边写入磁盘。拖动到未缓存位置时只下载新位置对应的分段；再次打开时已有分段可直接播放，缺失部分继续从网络补齐。
+本地 `content://`/文件资源不会被复制。普通网络 MP4 等渐进式单文件在播放时自动经过读穿代理：命中的 512 KiB 分段直接从本地读取，缺失分段通过上游 HTTP Range 请求边传给播放器边写入磁盘。拖动到未缓存位置时只下载新位置对应的分段；再次打开时已有分段可直接播放，缺失部分继续从网络补齐。代理检测到服务端不支持 Range 时会回退到原始地址播放。
 
 内容缓存默认开启，但可以通过 `VideoCacheConfig` 关闭或限制后缀：
 
 ```kotlin
 val cache = AppPrivateVideoPlayerCache(
     context = application,
+    cacheDirectory = File(application.filesDir, "video-cache"),
     config = VideoCacheConfig(
         enabled = true,
         cacheableExtensions = setOf("mp4", "m4v"),
@@ -274,7 +257,7 @@ val cache = AppPrivateVideoPlayerCache(
 )
 ```
 
-进度保存不受内容缓存开关影响。后缀不在允许列表、服务器不支持 HTTP Range，或资源是本地文件时，播放器会继续播放但不写入媒体内容缓存。
+进度保存不由内容缓存模块负责。后缀不在允许列表、服务器不支持 HTTP Range，或资源是本地文件时，播放器会继续播放但不写入媒体内容缓存。
 
 默认目录规则如下，业务不应直接依赖或修改内部文件：
 
@@ -289,7 +272,7 @@ filesDir/video-mobile-player-cache/
 
 自动生成的 `mediaId` 代表来源类型与完整 URI。鉴权 Header 或标题更新不会改变 ID；签名参数等 URL 内容变化会生成新 ID，旧缓存可通过原 `VideoSource.mediaId` 删除。如果同一 URL 返回了新内容，代理会根据长度和上游校验信息使旧分段失效。上游服务器需要正确支持 HTTP Range/`206 Partial Content`；不支持时应将 `contentCachePolicy` 设为 `DISABLED` 直连播放。
 
-HLS/DASH、本地文件和显式禁用缓存的网络源都只参与进度保存，不会写入媒体分段。`cacheMedia()` 是可选的整文件离线预取入口，仍复用同一套分段；普通边播边存不需要预先调用它。
+HLS/DASH、本地文件和显式禁用缓存的网络源不会写入媒体分段。`cacheMedia()` 是可选的整文件离线预取入口，仍复用同一套分段；普通边播边存不需要预先调用它。
 
 ## 播放控制与状态
 
@@ -317,7 +300,7 @@ Text("speed=${state.networkSpeedBytesPerSecond} B/s")
 
 切换 Media3/Ijk 时会恢复当前视频源、进度、播放意图、音量和倍速。切核需要释放旧内核并重新准备新内核，因此会有一次短暂的 `PREPARING/BUFFERING`，不是无缝解码器热切换。
 
-`setMedia()` 会重新加载，并按“缓存进度 -> 0”的顺序决定起点；可重复创建的 UI 容器应使用 `setMediaIfChanged()`。`VideoPlayer` 内部已经使用后者，因此横竖屏、全屏和悬浮容器迁移不会重置相同视频。
+`setMedia()` 会重新加载并使用调用方传入的 `startPositionMs`；可重复创建的 UI 容器应使用 `setMediaIfChanged()`。`VideoPlayer` 内部已经使用后者，因此横竖屏和全屏迁移不会重置相同视频。
 
 ## Controller 生命周期
 
@@ -346,138 +329,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
 同一时刻所有页面内、全屏或悬浮 UI 都必须使用同一个 Controller。不要为每个展示模式分别创建播放器，否则无法保证进度和播放状态连续。
 
-## 页面内、全屏与悬浮窗
+## 全屏与系统悬浮窗
 
-`VideoPlayerHost` 默认处理页面内与横屏全屏两种展示；业务只需要决定播放器在页面中的尺寸。`PlayerPresentationController` 保存展示状态，并为需要接管 PiP、系统悬浮窗或自定义全屏容器的 App 提供请求协议：
-
-- `INLINE`：页面内区域，通常配合竖屏。
-- `FULLSCREEN`：全窗口区域，通常配合横屏和沉浸模式。
-- `FLOATING`：Android PiP 或 App 自己的系统悬浮窗。
-
-### 启动方式
-
-```kotlin
-// 默认进入页面内竖屏模式。
-rememberPlayerPresentationController()
-
-// 页面创建后请求宿主切换横屏全屏。
-rememberPlayerPresentationController(
-    startupMode = PlayerPresentationMode.FULLSCREEN,
-)
-
-// 宿主原本已经处于横屏全屏，不产生启动切换请求。
-rememberPlayerPresentationController(
-    initialMode = PlayerPresentationMode.FULLSCREEN,
-)
-```
-
-`initialMode` 是宿主当前真实模式，`startupMode` 是进入页面后的目标模式。二者不同会产生一次待宿主处理的 `ChangeMode` 请求。
-
-```kotlin
-val presentation = rememberPlayerPresentationController(
-    startupMode = PlayerPresentationMode.INLINE,
-    capabilities = PlayerPresentationCapabilities(
-        fullscreen = true,
-        floating = false,
-        close = false,
-    ),
-)
-
-VideoPlayerHost(
-    controller = player,
-    source = source,
-    presentationController = presentation,
-    modifier = Modifier
-        .fillMaxWidth()
-        .aspectRatio(16f / 9f),
-)
-```
-
-标准 `VideoPlayerHost` 会消费 `INLINE/FULLSCREEN` 请求，创建全屏 Dialog、切换横屏、隐藏系统栏，并在退出时恢复进入全屏前的方向。`PlayerFullscreenOrientation.UNCHANGED` 可关闭自动方向切换。
-
-### 宿主接管 PiP、悬浮窗或自定义容器
-
-PiP 和系统悬浮窗涉及权限、前台 Service 与 App 生命周期，继续由宿主 Adapter 处理。使用 `VideoPlayerHost` 时通过 `onExternalPresentationRequest` 接收 `FLOATING/CLOSE` 请求；使用原始 `VideoPlayer` 时也可以自行收集全部请求。平台操作完成后调用 `confirmMode()`/`confirmClosed()`，失败时调用 `rejectPendingRequest()`。
-
-```kotlin
-val presentation = rememberPlayerPresentationController(
-    capabilities = PlayerPresentationCapabilities(
-        fullscreen = true,
-        floating = true,
-        close = true,
-    ),
-)
-
-VideoPlayerHost(
-    controller = player,
-    source = source,
-    presentationController = presentation,
-    onExternalPresentationRequest = { request ->
-        when (request) {
-            is PlayerPresentationRequest.ChangeMode -> {
-                if (request.to == PlayerPresentationMode.FLOATING) {
-                    val entered = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                        activity.enterPictureInPictureMode(
-                            PictureInPictureParams.Builder().build(),
-                        )
-                    if (entered) {
-                        presentation.confirmMode(PlayerPresentationMode.FLOATING)
-                    } else {
-                        presentation.rejectPendingRequest("PiP is unavailable")
-                    }
-                }
-            }
-
-            PlayerPresentationRequest.Close -> {
-                // 移除播放器 UI、停止前台 Service 或关闭播放 Activity。
-                presentation.confirmClosed()
-            }
-        }
-    },
-    modifier = Modifier
-        .fillMaxWidth()
-        .aspectRatio(16f / 9f),
-)
-```
-
-### PiP 配置与返回
-
-宿主 Activity 需要声明：
-
-```xml
-<activity
-    android:name=".PlayerActivity"
-    android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
-    android:resizeableActivity="true"
-    android:supportsPictureInPicture="true" />
-```
-
-进入悬浮窗时会记录此前是 `INLINE` 还是 `FULLSCREEN`。自定义悬浮窗被点击时可调用：
-
-```kotlin
-presentation.requestReturnFromFloating()
-```
-
-系统 PiP 被点击展开时，Android 会直接恢复 Activity。宿主在 `onPictureInPictureModeChanged(false, ...)` 中恢复布局/方向后确认：
-
-```kotlin
-val returnMode = presentation.state.value.floatingReturnMode
-presentation.confirmMode(returnMode)
-```
-
-这只改变展示模式和 Surface，播放进度及状态不变。`FLOATING` 模式下 `VideoPlayer` 收到宿主 `ON_STOP` 时不会自动暂停。
-
-### 系统级悬浮窗
-
-如果不是 Android PiP，而是 `WindowManager` 系统悬浮窗，宿主需要负责：
-
-- `SYSTEM_ALERT_WINDOW` 权限和授权失败流程。
-- 前台 Service、常驻通知和 Android 版本适配。
-- 创建、拖拽、缩放和销毁悬浮 View。
-- 将同一个 Controller 传给悬浮窗中的 `VideoPlayer`。
-- 点击悬浮窗后导航回 App，并确认目标展示模式。
-
-播放器库不主动申请悬浮窗权限，也不会自行启动 Service。
+播放器组件只负责页面内竖屏、横屏全屏和 Surface 生命周期。横屏全屏由
+`LandscapeVideoPlayer` 的 `isFullscreen` 与 `onFullscreenChange` 控制；PiP、系统悬浮窗、权限、前台 Service 和导航由宿主自行实现，并继续复用同一个 `VideoPlayerController`。
 
 ## 网络加载速度
 
@@ -508,7 +363,6 @@ VideoPlayer(
     source = source,
     uiConfig = VideoPlayerUiConfig(
         showEngineSwitcher = false,
-        showPresentationControls = true,
         showNetworkSpeedWhileLoading = true,
         skipDurationMs = 15_000L,
         controlsAutoHideMs = 4_000L,
@@ -527,8 +381,6 @@ VideoPlayer(
 
 ## 重要约束
 
-- `confirmMode()` 表示平台操作已经完成，不应在方向切换或 PiP 进入前提前调用。
-- `confirmClosed()` 只更新展示状态，不会自动调用 `player.close()`。
 - Controller 关闭后不能复用。
 - 系统悬浮窗必须由前台 Service 持有长生命周期 Controller。
 - 当前库尚未内置 MediaSession、音频焦点、耳机拔出处理和锁屏控制。

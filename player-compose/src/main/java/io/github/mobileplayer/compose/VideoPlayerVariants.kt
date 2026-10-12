@@ -26,9 +26,22 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import io.github.mobileplayer.core.PlaybackError
 import io.github.mobileplayer.core.PlaybackState
 import io.github.mobileplayer.core.VideoPlayerController
 import io.github.mobileplayer.core.VideoSource
+
+/** Orientation applied to the host Activity while [LandscapeVideoPlayer] is fullscreen. */
+enum class PlayerFullscreenOrientation {
+    /** Allow either landscape direction according to the device sensor. */
+    SENSOR_LANDSCAPE,
+
+    /** Lock to the device's primary landscape direction. */
+    LANDSCAPE,
+
+    /** Do not change the host Activity orientation. */
+    UNCHANGED,
+}
 
 /** A portrait-only player for media whose display height is greater than width. */
 @Composable
@@ -39,24 +52,30 @@ fun PortraitVideoPlayer(
         .fillMaxWidth()
         .aspectRatio(9f / 16f),
     autoPlay: Boolean = true,
-    uiConfig: VideoPlayerUiConfig = VideoPlayerUiConfig(showPresentationControls = false),
+    startPositionMs: Long = 0L,
+    uiConfig: VideoPlayerUiConfig = VideoPlayerUiConfig(),
     strings: VideoPlayerStrings = VideoPlayerStrings(),
     colors: VideoPlayerColors = VideoPlayerColors(),
     overlayContent: @Composable BoxScope.(PlaybackState) -> Unit = {},
+    controlsContent: (@Composable BoxScope.(PlaybackState, PlayerUiActions) -> Unit)? = null,
+    loadingContent: (@Composable BoxScope.(PlaybackState) -> Unit)? = null,
+    errorContent: (@Composable BoxScope.(PlaybackError, PlayerUiActions) -> Unit)? = null,
 ) {
     VideoPlayer(
         controller = controller,
         source = source,
         modifier = modifier,
         autoPlay = autoPlay,
-        uiConfig = uiConfig.copy(showPresentationControls = false),
+        startPositionMs = startPositionMs,
+        uiConfig = uiConfig,
         strings = strings,
         colors = colors,
-        presentationController = null,
-        onFullscreenRequest = null,
         onFullscreenChangeRequest = null,
         isFullscreen = false,
         overlayContent = overlayContent,
+        controlsContent = controlsContent,
+        loadingContent = loadingContent,
+        errorContent = errorContent,
     )
 }
 
@@ -74,12 +93,16 @@ fun LandscapeVideoPlayer(
         .fillMaxWidth()
         .aspectRatio(16f / 9f),
     autoPlay: Boolean = true,
-    uiConfig: VideoPlayerUiConfig = VideoPlayerUiConfig(showPresentationControls = false),
+    startPositionMs: Long = 0L,
+    uiConfig: VideoPlayerUiConfig = VideoPlayerUiConfig(),
     strings: VideoPlayerStrings = VideoPlayerStrings(),
     colors: VideoPlayerColors = VideoPlayerColors(),
     orientation: PlayerFullscreenOrientation = PlayerFullscreenOrientation.SENSOR_LANDSCAPE,
     immersive: Boolean = true,
     overlayContent: @Composable BoxScope.(PlaybackState) -> Unit = {},
+    controlsContent: (@Composable BoxScope.(PlaybackState, PlayerUiActions) -> Unit)? = null,
+    loadingContent: (@Composable BoxScope.(PlaybackState) -> Unit)? = null,
+    errorContent: (@Composable BoxScope.(PlaybackError, PlayerUiActions) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -110,13 +133,16 @@ fun LandscapeVideoPlayer(
                     .fillMaxSize()
                     .background(Color.Black),
                 autoPlay = autoPlay,
-                uiConfig = uiConfig.copy(showPresentationControls = false),
+                startPositionMs = startPositionMs,
+                uiConfig = uiConfig,
                 strings = strings,
                 colors = colors,
-                presentationController = null,
                 onFullscreenChangeRequest = onFullscreenChange,
                 isFullscreen = true,
                 overlayContent = overlayContent,
+                controlsContent = controlsContent,
+                loadingContent = loadingContent,
+                errorContent = errorContent,
             )
         }
     } else {
@@ -125,13 +151,16 @@ fun LandscapeVideoPlayer(
             source = source,
             modifier = modifier,
             autoPlay = autoPlay,
-            uiConfig = uiConfig.copy(showPresentationControls = false),
+            startPositionMs = startPositionMs,
+            uiConfig = uiConfig,
             strings = strings,
             colors = colors,
-            presentationController = null,
             onFullscreenChangeRequest = onFullscreenChange,
             isFullscreen = false,
             overlayContent = overlayContent,
+            controlsContent = controlsContent,
+            loadingContent = loadingContent,
+            errorContent = errorContent,
         )
     }
 }

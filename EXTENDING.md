@@ -4,13 +4,12 @@
 
 ## 设计原则
 
-MobilePlayer 将播放、展示和 UI 分为三个独立模块：
+MobilePlayer 将播放和 UI 分为两个独立模块，展示状态由横屏组件的受控参数表达：
 
 ```text
 业务/宿主窗口
       |
-      +---- PlayerPresentationController  展示模式请求
-      |
+      +---- PortraitVideoPlayer / LandscapeVideoPlayer
       +---- VideoPlayerController          播放命令与统一状态
                     |
                     +---- PlaybackEngine   播放内核 seam
@@ -23,7 +22,7 @@ MobilePlayer 将播放、展示和 UI 分为三个独立模块：
 - 具体播放器 SDK 只存在于对应 Adapter 内。
 - `PortraitVideoPlayer` 固定竖版播放；`LandscapeVideoPlayer` 由宿主持有 `isFullscreen`，组件负责横屏 Activity、全屏窗口和系统栏；PiP、权限、Service 和导航继续由宿主负责。
 - 新功能优先消费 `PlaybackState`，避免直接读取 Media3/IjkPlayer 对象。
-- 播放进度始终通过 `VideoPlayerCache` 保存；网络内容缓存通过 `VideoCacheConfig` 和 `VideoSource.ContentCachePolicy` 控制，不在具体内核中各存一份。
+- 播放进度由宿主通过 `PlaybackState` 获取并保存；恢复时通过 `startPositionMs` 传入。网络内容缓存由 `VideoContentCache` 和 `VideoCacheConfig` 控制，不在具体内核中各存一份。
 
 这种划分让播放控制保持为深模块：调用方只学习一套 Interface，切核、Surface 迁移和状态连续性都隐藏在 Implementation 内。
 
@@ -33,19 +32,20 @@ MobilePlayer 将播放、展示和 UI 分为三个独立模块：
 | --- | --- | --- |
 | 弹幕、水印、字幕覆盖层 | `overlayContent` slot | 否 |
 | 自定义加载/网速展示 | 读取 `PlaybackState` 的 Compose UI | 否 |
-| 默认横屏全屏 | `VideoPlayerHost` | 否 |
-| 自定义全屏策略 | 宿主处理 `PlayerPresentationRequest` | 否 |
+| 默认横屏全屏 | `LandscapeVideoPlayer` + `isFullscreen` | 否 |
+| 自定义全屏策略 | 宿主控制 `isFullscreen` 和窗口 | 否 |
 | Android PiP | 宿主 Activity Adapter | 否 |
 | 系统悬浮窗 | 前台 Service + WindowManager Adapter | 否 |
 | 通知栏/锁屏控制 | MediaSession + 前台 Service | 否 |
 | 新播放器内核 | `PlaybackEngine` Adapter | 需要注册类型与工厂 |
-| 自定义进度/内容缓存 | `VideoPlayerCache` Adapter | 否 |
+| 自定义进度存储 | `PlaybackProgressStore` Adapter | 否 |
+| 自定义内容缓存 | `VideoContentCache` Adapter | 否 |
 | 新的统一播放状态 | `EnginePlaybackState`/`PlaybackState` | 是 |
 | 完全替换内置控制 UI | 新增公开 Compose UI slot/Surface 接口 | 当前需要修改 `player-compose` |
 
 ## 弹幕扩展
 
-通过 `overlayContent` 把弹幕绘制在播放器 Surface 上方。`VideoPlayerHost` 会把同一个 slot 同时用于页面内和全屏容器：
+通过 `overlayContent` 把弹幕绘制在播放器 Surface 上方。`PortraitVideoPlayer` 和 `LandscapeVideoPlayer` 都会把同一个 slot 传给底层播放器：
 
 ```kotlin
 @Composable
@@ -54,9 +54,11 @@ fun DanmakuVideoPlayer(
     source: VideoSource,
     danmaku: List<DanmakuItem>,
 ) {
-    VideoPlayerHost(
+    LandscapeVideoPlayer(
         controller = controller,
         source = source,
+        isFullscreen = isFullscreen,
+        onFullscreenChange = { isFullscreen = it },
         modifier = Modifier.fillMaxSize(),
         overlayContent = { playback ->
             DanmakuLayer(
@@ -94,7 +96,7 @@ playbackState.networkSpeedBytesPerSecond
 业务可以关闭默认网速文字，并自行渲染：
 
 ```kotlin
-VideoPlayerHost(
+LandscapeVideoPlayer(
     controller = controller,
     source = source,
     uiConfig = VideoPlayerUiConfig(
@@ -118,41 +120,28 @@ VideoPlayerHost(
 
 ## 自定义全屏策略
 
-普通嵌入场景直接使用 `VideoPlayerHost`，它已经实现区域内播放、横屏沉浸式全屏和返回原位置。只有 App 需要不同策略时，才使用 `PlayerPresentationController` 的请求/确认 Interface 自行选择：
-
-- 同一个 Activity 内切换 Compose 布局。
-- 导航到独立播放 Activity。
-- 使用 Dialog/Popup 容器。
-- 横屏、传感器横屏或保持用户方向。
-- 是否隐藏状态栏和导航栏。
-
-无论选择哪种实现，都应遵循：
-
-1. 收到 `ChangeMode`。
-2. 完成窗口、方向或导航操作。
-3. 将同一个 `VideoPlayerController` 绑定到新 UI。
-4. 调用 `confirmMode(target)`。
-5. 失败则调用 `rejectPendingRequest(message)`。
+普通嵌入场景直接使用 `PortraitVideoPlayer` 或 `LandscapeVideoPlayer`。横屏组件会根据
+`isFullscreen` 创建全屏窗口并切换 Activity 方向；宿主只需在 `onFullscreenChange` 中更新状态。
+如果业务需要完全不同的窗口策略，可以直接使用底层 `VideoPlayer`，自行管理窗口，但仍应复用同一个 `VideoPlayerController`。
 
 不要在 `PlaybackEngine` 中调用 `requestedOrientation` 或 WindowInsets API。这些行为与解码无关，也会阻止内核在 Service 或测试环境中复用。
 
 ## 自定义缓存 Adapter
 
-`VideoPlayerCache` 是播放进度和内容缓存的统一 seam，但两类数据在 Implementation 内应保持独立：进度是按 `mediaId` 保存的小记录，媒体内容是可淘汰的大文件。Controller 只负责恢复/保存时机和解析播放源，具体内核不应直接访问缓存。
+`VideoContentCache` 只负责媒体内容；进度是宿主按 `mediaId` 保存的小记录。Controller 不读写进度，只负责使用调用方传入的起始位置和解析播放源，具体内核不应直接访问缓存。
 
 `mediaId` 由 `VideoSource` 根据来源类型与完整 URI 自动生成，宿主不负责构造，也不能通过公开 factory 覆盖。自定义缓存 Adapter 应把它当作不透明键；标题和请求头不参与身份计算，URI 变化会得到新键。
 
 自定义 Adapter 必须保持以下语义：
 
-- `getProgress()`/`saveProgress()` 必须快速且同步，不能在主线程执行网络请求。
 - `getCachedSource()` 可以返回本地文件或读穿代理 URL；返回 `null` 表示原源直连。
 - 同一个 `mediaId` 在 Media3/Ijk 切换前后必须解析到同一份缓存内容。
 - 本地 URI 不应被复制；HLS/DASH 默认不应进入渐进式文件缓存。
-- `remove(mediaId)` 同时删除该资源的进度和内容，`clear()` 删除全部。
+- `remove(mediaId)` 只删除该资源的媒体内容，`clear()` 只清空媒体内容。
 - 鉴权信息只能发给可信上游，不能写入文件名、日志或持久化元数据。
 - 磁盘写入应先落临时文件并校验，再原子替换可用文件。
 
-内置 Adapter 使用 512 KiB Range 分段与 loopback 代理，适合支持 `206 Partial Content` 的 MP4 等单文件。需要 HLS 离线、DRM 下载、跨账号隔离或自定义加密时，应替换整个 `VideoPlayerCache` Adapter，而不是在两个 `PlaybackEngine` Adapter 中分别实现。
+内置 Adapter 使用 512 KiB Range 分段与 loopback 代理，适合支持 `206 Partial Content` 的 MP4 等单文件。需要 HLS 离线、DRM 下载或自定义加密时，应替换 `VideoContentCache` Adapter，而不是在两个 `PlaybackEngine` Adapter 中分别实现。媒体缓存目录由 `AppPrivateVideoPlayerCache(cacheDirectory = ...)` 配置；目录变化不会改变 `mediaId`。
 
 ## PiP 与系统悬浮窗 Adapter
 
@@ -164,7 +153,6 @@ PiP 通常继续使用原 Activity 和同一个 Controller。宿主负责：
 - `PictureInPictureParams` 和宽高比。
 - 进入/退出 PiP 回调。
 - PiP 中隐藏不适合小窗口的控制 UI。
-- 点击展开后确认 `floatingReturnMode`。
 
 ### WindowManager 系统悬浮窗
 

@@ -42,15 +42,8 @@ data class VideoCacheConfig(
         .toSet()
 }
 
-/**
- * Engine-neutral cache seam used by [VideoPlayerController].
- *
- * Implementations store small progress records synchronously and must keep
- * those operations fast. Source resolution may return a read-through local
- * proxy that persists only the byte ranges requested by an engine. Local
- * sources and segmented streaming manifests must bypass content caching.
- */
-interface VideoPlayerCache {
+/** Small synchronous store for engine-independent playback history. */
+interface PlaybackProgressStore {
     fun getProgress(mediaId: String): PlaybackProgress?
 
     fun getProgressByUrl(url: String): PlaybackProgress? =
@@ -62,6 +55,13 @@ interface VideoPlayerCache {
     fun getAllProgress(): List<PlaybackProgress> = emptyList()
 
     fun saveProgress(progress: PlaybackProgress)
+}
+
+/**
+ * Shared media-byte cache boundary. It never owns playback progress; callers
+ * can provide a separate [PlaybackProgressStore] when they need history.
+ */
+interface VideoContentCache {
 
     /** Returns an engine-neutral cached playback source, or null to use [source]. */
     fun getCachedSource(source: VideoSource): VideoSource?
@@ -72,23 +72,9 @@ interface VideoPlayerCache {
         onProgress: (MediaCacheProgress) -> Unit = {},
     ): VideoSource
 
-    /** Removes both the progress record and cached media for [mediaId]. */
+    /** Removes cached media for [mediaId]. */
     suspend fun remove(mediaId: String)
 
-    /** Removes every progress record and cached media file owned by this cache. */
+    /** Removes every cached media file owned by this cache. */
     suspend fun clear()
-}
-
-/** Controls automatic progress restoration and persistence. */
-data class PlaybackProgressPolicy(
-    val saveIntervalMs: Long = 5_000L,
-    /** A saved position this close to the end restarts from zero. */
-    val restartCompletedWithinMs: Long = 5_000L,
-) {
-    init {
-        require(saveIntervalMs > 0L) { "Progress save interval must be positive" }
-        require(restartCompletedWithinMs >= 0L) {
-            "Completed playback threshold must not be negative"
-        }
-    }
 }

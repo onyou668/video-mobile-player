@@ -15,9 +15,9 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class VideoPlayerControllerTest {
     @Test
-    fun localSourceWithoutCachedProgressStartsAtZero() = runTest {
+    fun localSourceStartsAtZero() = runTest {
         val media3 = FakeEngine()
-        val controller = controller(media3, FakeEngine(), FakeVideoPlayerCache())
+        val controller = controller(media3, FakeEngine(), FakeVideoContentCache())
 
         controller.setMedia(
             VideoSource.local("content://media/video/42"),
@@ -29,17 +29,12 @@ class VideoPlayerControllerTest {
     }
 
     @Test
-    fun cachedProgressIsRestoredAutomatically() = runTest {
+    fun callerProvidedStartPositionIsUsed() = runTest {
         val source = VideoSource.network("https://example.com/episode-1.mp4")
-        val cache = FakeVideoPlayerCache().apply {
-            saveProgress(
-                PlaybackProgress(source.mediaId, positionMs = 25_000L, durationMs = 90_000L),
-            )
-        }
         val media3 = FakeEngine()
-        val controller = controller(media3, FakeEngine(), cache)
+        val controller = controller(media3, FakeEngine())
 
-        controller.setMedia(source)
+        controller.setMedia(source, startPositionMs = 25_000L)
 
         assertEquals(25_000L, media3.preparedPositionMs)
         assertEquals(25_000L, controller.state.value.positionMs)
@@ -47,18 +42,13 @@ class VideoPlayerControllerTest {
     }
 
     @Test
-    fun cachedProgressIsSharedAcrossEngineSwitches() = runTest {
+    fun callerProvidedPositionSurvivesEngineSwitches() = runTest {
         val source = VideoSource.network("https://example.com/episode-2.mp4")
-        val cache = FakeVideoPlayerCache().apply {
-            saveProgress(
-                PlaybackProgress(source.mediaId, positionMs = 31_000L, durationMs = 100_000L),
-            )
-        }
         val media3 = FakeEngine()
         val ijk = FakeEngine()
-        val controller = controller(media3, ijk, cache)
+        val controller = controller(media3, ijk)
 
-        controller.setMedia(source)
+        controller.setMedia(source, startPositionMs = 31_000L)
         media3.emit(
             EnginePlaybackState(
                 status = PlaybackStatus.READY,
@@ -71,7 +61,6 @@ class VideoPlayerControllerTest {
         controller.switchEngine(PlayerEngineType.IJK)
 
         assertEquals(38_000L, ijk.preparedPositionMs)
-        assertEquals(38_000L, cache.getProgress(source.mediaId)?.positionMs)
         assertEquals(PlayerEngineType.IJK, controller.state.value.engineType)
         controller.close()
     }
@@ -83,7 +72,7 @@ class VideoPlayerControllerTest {
             uri = "file:///cache/cached-movie.media",
             type = VideoSource.Type.LOCAL,
         )
-        val cache = FakeVideoPlayerCache().apply {
+        val cache = FakeVideoContentCache().apply {
             cachedSources[source.mediaId] = cachedSource
         }
         val media3 = FakeEngine()
@@ -108,19 +97,14 @@ class VideoPlayerControllerTest {
     }
 
     @Test
-    fun completedCachedProgressRestartsFromBeginning() = runTest {
+    fun callerControlsCompletedPlaybackPosition() = runTest {
         val source = VideoSource.network("https://example.com/movie.mp4")
-        val cache = FakeVideoPlayerCache().apply {
-            saveProgress(
-                PlaybackProgress(source.mediaId, positionMs = 98_000L, durationMs = 100_000L),
-            )
-        }
         val media3 = FakeEngine()
-        val controller = controller(media3, FakeEngine(), cache)
+        val controller = controller(media3, FakeEngine())
 
-        controller.setMedia(source)
+        controller.setMedia(source, startPositionMs = 98_000L)
 
-        assertEquals(0L, media3.preparedPositionMs)
+        assertEquals(98_000L, media3.preparedPositionMs)
         controller.close()
     }
 
@@ -292,7 +276,7 @@ class VideoPlayerControllerTest {
     private fun kotlinx.coroutines.test.TestScope.controller(
         media3: FakeEngine,
         ijk: FakeEngine,
-        cache: VideoPlayerCache? = null,
+        cache: VideoContentCache? = null,
     ) = VideoPlayerController(
         initialEngine = PlayerEngineType.MEDIA3,
         factories = mapOf(
@@ -303,17 +287,8 @@ class VideoPlayerControllerTest {
         cache = cache,
     )
 
-    private class FakeVideoPlayerCache : VideoPlayerCache {
-        private val progress = mutableMapOf<String, PlaybackProgress>()
+    private class FakeVideoContentCache : VideoContentCache {
         val cachedSources = mutableMapOf<String, VideoSource>()
-
-        override fun getProgress(mediaId: String): PlaybackProgress? = progress[mediaId]
-
-        override fun getAllProgress(): List<PlaybackProgress> = progress.values.toList()
-
-        override fun saveProgress(progress: PlaybackProgress) {
-            this.progress[progress.mediaId] = progress
-        }
 
         override fun getCachedSource(source: VideoSource): VideoSource? =
             cachedSources[source.mediaId]
@@ -324,11 +299,11 @@ class VideoPlayerControllerTest {
         ): VideoSource = source
 
         override suspend fun remove(mediaId: String) {
-            progress.remove(mediaId)
+            cachedSources.remove(mediaId)
         }
 
         override suspend fun clear() {
-            progress.clear()
+            cachedSources.clear()
         }
     }
 

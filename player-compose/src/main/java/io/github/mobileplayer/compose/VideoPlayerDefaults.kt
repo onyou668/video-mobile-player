@@ -1,12 +1,13 @@
 package io.github.mobileplayer.compose
 
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.Stable
 import androidx.compose.ui.graphics.Color
+import io.github.mobileplayer.core.PlayerEngineType
 
 @Immutable
 data class VideoPlayerUiConfig(
     val showEngineSwitcher: Boolean = true,
-    val showPresentationControls: Boolean = true,
     /** Shows measured throughput below the spinner for network sources. */
     val showNetworkSpeedWhileLoading: Boolean = true,
     val skipDurationMs: Long = 10_000L,
@@ -41,4 +42,17 @@ data class VideoPlayerColors(
     val accent: Color = Color(0xFF36C98F),
     val buffered: Color = Color(0x80FFFFFF),
     val error: Color = Color(0xFFFFB4AB),
+)
+
+/** Commands exposed to replaceable player UI slots. */
+@Stable
+data class PlayerUiActions(
+    val togglePlay: () -> Unit,
+    val seekTo: (Long) -> Unit,
+    val seekBy: (Long) -> Unit,
+    val setVolume: (Float) -> Unit,
+    val setPlaybackSpeed: (Float) -> Unit,
+    val switchEngine: (PlayerEngineType) -> Unit,
+    val retry: () -> Unit,
+    val requestFullscreen: (Boolean) -> Unit,
 )

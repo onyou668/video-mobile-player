@@ -80,11 +80,12 @@ internal class ProgressiveMediaProxy(
             entries[key] ?: createEntry(key, source).also { entries[key] = it }
         }
         entry.source = source
+        if (entry.contentCachingDisabled) return null
         val port = serverSocket.localPort
         return source.copy(
             uri = "http://$LOOPBACK_ADDRESS:$port/media/$sessionToken/$key",
             type = VideoSource.Type.NETWORK,
-            headers = emptyMap(),
+            headers = source.headers,
             contentCachePolicy = VideoSource.ContentCachePolicy.DISABLED,
         ).also {
             entry.directory.setLastModified(System.currentTimeMillis())
@@ -95,11 +96,14 @@ internal class ProgressiveMediaProxy(
         source: VideoSource,
         onProgress: (MediaCacheProgress) -> Unit,
     ): VideoSource {
-        val playbackSource = requireNotNull(playbackSource(source)) {
-            "Source does not support progressive content caching"
-        }
+        val playbackSource = playbackSource(source) ?: return source
         val entry = requireNotNull(entries[cacheKeyFor(source.mediaId)])
-        val metadata = ensureMetadata(entry)
+        val metadata = try {
+            ensureMetadata(entry)
+        } catch (error: CacheNotSupportedException) {
+            entry.contentCachingDisabled = true
+            return source
+        }
         val totalBytes = requireNotNull(metadata.contentLength) {
             "Upstream content length is required for prefetch"
         }
@@ -181,6 +185,7 @@ internal class ProgressiveMediaProxy(
     private fun handleConnection(socket: Socket) {
         socket.use { client ->
             client.soTimeout = CLIENT_TIMEOUT_MS
+            var fallbackEntry: CacheEntry? = null
             runCatching {
                 val request = readRequest(client) ?: return
                 val key = routeKey(request.path)
@@ -193,9 +198,16 @@ internal class ProgressiveMediaProxy(
                     sendError(client, 405, "Method Not Allowed")
                     return
                 }
+                fallbackEntry = entry
                 serve(entry, request, client)
             }.onFailure { error ->
-                runCatching { sendError(client, 502, error.message ?: "Upstream Error") }
+                val entry = fallbackEntry
+                if (error is CacheNotSupportedException && entry != null) {
+                    entry.contentCachingDisabled = true
+                    runCatching { sendRedirect(client, entry.source.uri) }
+                } else {
+                    runCatching { sendError(client, 502, error.message ?: "Upstream Error") }
+                }
             }
         }
     }
@@ -318,7 +330,7 @@ internal class ProgressiveMediaProxy(
         val connection = openConnection(entry.source, segmentStart, segmentEnd, metadata.validator())
         try {
             val responseCode = connection.responseCode
-            check(responseCode == HttpURLConnection.HTTP_PARTIAL) {
+            requireCacheSupport(responseCode == HttpURLConnection.HTTP_PARTIAL) {
                 "Upstream server must support HTTP byte ranges (received $responseCode)"
             }
             validateContentRange(connection.getHeaderField("Content-Range"), segmentStart, segmentEnd)
@@ -397,21 +409,21 @@ internal class ProgressiveMediaProxy(
         val connection = openConnection(entry.source, 0L, 0L, null)
         try {
             val responseCode = connection.responseCode
-            check(responseCode == HttpURLConnection.HTTP_PARTIAL) {
+            requireCacheSupport(responseCode == HttpURLConnection.HTTP_PARTIAL) {
                 "Upstream server must support HTTP byte ranges (received $responseCode)"
             }
             val contentRange = parseContentRange(connection.getHeaderField("Content-Range"))
-            val totalBytes = requireNotNull(contentRange?.totalBytes) {
-                "Upstream server did not report a complete Content-Range"
-            }
-            check(totalBytes > 0L) { "Upstream media is empty" }
+            val totalBytes = contentRange?.totalBytes ?: throw CacheNotSupportedException(
+                "Upstream server did not report a complete Content-Range",
+            )
+            requireCacheSupport(totalBytes > 0L) { "Upstream media is empty" }
             existing.contentLength = totalBytes
             existing.contentType = connection.contentType
                 ?.substringBefore(';')
                 ?.trim()
                 ?.takeIf(String::isNotBlank)
             val normalizedContentType = existing.contentType.orEmpty().lowercase(Locale.US)
-            check("mpegurl" !in normalizedContentType && "dash+xml" !in normalizedContentType) {
+            requireCacheSupport("mpegurl" !in normalizedContentType && "dash+xml" !in normalizedContentType) {
                 "HLS/DASH content must disable progressive content caching"
             }
             existing.etag = connection.getHeaderField("ETag")
@@ -476,9 +488,13 @@ internal class ProgressiveMediaProxy(
 
     private fun validateContentRange(value: String?, expectedStart: Long, expectedEnd: Long) {
         val parsed = parseContentRange(value)
-        check(parsed != null && parsed.start == expectedStart && parsed.endInclusive == expectedEnd) {
+        requireCacheSupport(parsed != null && parsed.start == expectedStart && parsed.endInclusive == expectedEnd) {
             "Unexpected upstream Content-Range: $value"
         }
+    }
+
+    private inline fun requireCacheSupport(condition: Boolean, message: () -> String) {
+        if (!condition) throw CacheNotSupportedException(message())
     }
 
     private fun validCachedBytes(entry: CacheEntry, totalBytes: Long): Long {
@@ -546,6 +562,22 @@ internal class ProgressiveMediaProxy(
             ),
         )
         output.write(body)
+        output.flush()
+    }
+
+    private fun sendRedirect(socket: Socket, location: String) {
+        if (socket.isClosed || socket.isOutputShutdown) return
+        val output = BufferedOutputStream(socket.getOutputStream())
+        writeResponseHead(
+            output,
+            307,
+            "Temporary Redirect",
+            mapOf(
+                "Location" to location,
+                "Content-Length" to "0",
+                "Connection" to "close",
+            ),
+        )
         output.flush()
     }
 
@@ -639,7 +671,10 @@ internal class ProgressiveMediaProxy(
         @Volatile var source: VideoSource,
         val directory: File,
         var metadata: CacheMetadata? = null,
+        @Volatile var contentCachingDisabled: Boolean = false,
     )
+
+    private class CacheNotSupportedException(message: String) : IllegalStateException(message)
 
     private data class CacheMetadata(
         var segmentSizeBytes: Long,

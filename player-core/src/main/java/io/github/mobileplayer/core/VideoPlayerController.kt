@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 /**
  * Owns one engine at a time and exposes stable commands/state to the UI.
@@ -20,8 +19,8 @@ class VideoPlayerController(
     initialEngine: PlayerEngineType,
     factories: Map<PlayerEngineType, PlaybackEngineFactory>,
     private val scope: CoroutineScope,
-    private val cache: VideoPlayerCache? = null,
-    private val progressPolicy: PlaybackProgressPolicy = PlaybackProgressPolicy(),
+    private val cache: VideoContentCache? = null,
+    private val ownedCache: AutoCloseable? = null,
 ) : AutoCloseable {
     private val factories = factories.toMap()
     private val mutableState = MutableStateFlow(PlaybackState(engineType = initialEngine))
@@ -36,7 +35,6 @@ class VideoPlayerController(
     private var resumeAfterHostStart = false
     private var hostStopped = false
     private var closed = false
-    private var lastSavedPositionMs: Long? = null
 
     init {
         require(factories.containsKey(initialEngine)) {
@@ -45,23 +43,22 @@ class VideoPlayerController(
         replaceEngine(initialEngine, restorePositionMs = 0L, restorePlayback = false)
     }
 
-    /** Loads [source] and restores its starting position from the shared cache. */
+    /** Loads [source] from a position supplied by the caller. */
     fun setMedia(
         source: VideoSource,
         playWhenReady: Boolean = true,
+        startPositionMs: Long = 0L,
     ) {
         checkOpen()
-        persistProgress(force = true)
         this.source = source
         this.playWhenReady = playWhenReady
-        val restoredPositionMs = resolveStartPosition(source)
-        lastSavedPositionMs = restoredPositionMs
+        val initialPositionMs = startPositionMs.coerceAtLeast(0L)
         if (hostStopped && playWhenReady) resumeAfterHostStart = true
         mutableState.value = mutableState.value.copy(
             source = source,
             status = PlaybackStatus.PREPARING,
             isPlaying = false,
-            positionMs = restoredPositionMs,
+            positionMs = initialPositionMs,
             durationMs = 0L,
             bufferedPositionMs = 0L,
             networkSpeedBytesPerSecond = 0L,
@@ -70,7 +67,7 @@ class VideoPlayerController(
         engine?.prepare(
             source = resolvePlaybackSource(source),
             playWhenReady = playWhenReady && !hostStopped,
-            startPositionMs = restoredPositionMs,
+            startPositionMs = initialPositionMs,
         )
     }
 
@@ -84,10 +81,11 @@ class VideoPlayerController(
     fun setMediaIfChanged(
         source: VideoSource,
         playWhenReady: Boolean = true,
+        startPositionMs: Long = 0L,
     ): Boolean {
         checkOpen()
         if (this.source == source) return false
-        setMedia(source, playWhenReady)
+        setMedia(source, playWhenReady, startPositionMs)
         return true
     }
 
@@ -97,7 +95,7 @@ class VideoPlayerController(
         onProgress: (MediaCacheProgress) -> Unit = {},
     ): VideoSource {
         checkOpen()
-        return requireNotNull(cache) { "No VideoPlayerCache was configured" }
+        return requireNotNull(cache) { "No VideoContentCache was configured" }
             .cache(source, onProgress)
     }
 
@@ -106,7 +104,6 @@ class VideoPlayerController(
         if (type == mutableState.value.engineType) return
         require(factories.containsKey(type)) { "No engine factory registered for $type" }
 
-        persistProgress(force = true)
         val snapshot = mutableState.value
         replaceEngine(
             type = type,
@@ -133,7 +130,6 @@ class VideoPlayerController(
         playWhenReady = false
         resumeAfterHostStart = false
         engine?.pause()
-        persistProgress(force = true)
     }
 
     fun togglePlayPause() {
@@ -146,7 +142,6 @@ class VideoPlayerController(
         val target = if (duration > 0L) positionMs.coerceIn(0L, duration) else positionMs.coerceAtLeast(0L)
         engine?.seekTo(target)
         mutableState.value = mutableState.value.copy(positionMs = target)
-        persistProgress(force = true)
     }
 
     fun seekBy(offsetMs: Long) {
@@ -197,7 +192,6 @@ class VideoPlayerController(
      */
     fun onHostStop(keepPlaying: Boolean = false) {
         if (closed) return
-        persistProgress(force = true)
         if (keepPlaying) {
             hostStopped = false
             resumeAfterHostStart = false
@@ -221,13 +215,13 @@ class VideoPlayerController(
 
     override fun close() {
         if (closed) return
-        persistProgress(force = true)
         closed = true
         stateCollection?.cancel()
         stateCollection = null
         engine?.release()
         engine = null
         surface = null
+        runCatching { ownedCache?.close() }
     }
 
     private fun replaceEngine(
@@ -271,7 +265,6 @@ class VideoPlayerController(
                     videoHeight = engineState.videoHeight,
                     error = engineState.error,
                 )
-                persistProgress(force = engineState.status == PlaybackStatus.ENDED)
             }
         }
 
@@ -284,42 +277,8 @@ class VideoPlayerController(
         }
     }
 
-    private fun resolveStartPosition(source: VideoSource): Long {
-        val saved = runCatching { cache?.getProgress(source.mediaId) }.getOrNull() ?: return 0L
-        val completed = saved.durationMs > 0L &&
-            saved.positionMs >= (saved.durationMs - progressPolicy.restartCompletedWithinMs)
-                .coerceAtLeast(0L)
-        return if (completed) 0L else saved.positionMs
-    }
-
     private fun resolvePlaybackSource(source: VideoSource): VideoSource =
         runCatching { cache?.getCachedSource(source) }.getOrNull() ?: source
-
-    private fun persistProgress(force: Boolean) {
-        val targetCache = cache ?: return
-        val currentSource = source ?: return
-        val snapshot = mutableState.value
-        if (snapshot.positionMs <= 0L && snapshot.durationMs <= 0L) return
-
-        val previousPosition = lastSavedPositionMs
-        if (!force && previousPosition != null &&
-            abs(snapshot.positionMs - previousPosition) < progressPolicy.saveIntervalMs
-        ) {
-            return
-        }
-
-        runCatching {
-            targetCache.saveProgress(
-                PlaybackProgress(
-                    mediaId = currentSource.mediaId,
-                    positionMs = snapshot.positionMs.coerceAtLeast(0L),
-                    durationMs = snapshot.durationMs.coerceAtLeast(0L),
-                ),
-            )
-        }.onSuccess {
-            lastSavedPositionMs = snapshot.positionMs
-        }
-    }
 
     private fun checkOpen() {
         check(!closed) { "VideoPlayerController has already been closed" }

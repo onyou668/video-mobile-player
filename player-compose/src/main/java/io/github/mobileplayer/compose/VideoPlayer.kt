@@ -23,13 +23,10 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
-import androidx.compose.material.icons.filled.StayCurrentPortrait
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -67,11 +64,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.mobileplayer.core.PlaybackState
+import io.github.mobileplayer.core.PlaybackError
 import io.github.mobileplayer.core.PlaybackStatus
 import io.github.mobileplayer.core.PlayerEngineType
-import io.github.mobileplayer.core.PlayerPresentationController
-import io.github.mobileplayer.core.PlayerPresentationMode
-import io.github.mobileplayer.core.PlayerPresentationState
 import io.github.mobileplayer.core.VideoPlayerController
 import io.github.mobileplayer.core.VideoSource
 import kotlinx.coroutines.delay
@@ -87,20 +82,18 @@ fun VideoPlayer(
     modifier: Modifier = Modifier,
     source: VideoSource? = null,
     autoPlay: Boolean = true,
+    startPositionMs: Long = 0L,
     uiConfig: VideoPlayerUiConfig = VideoPlayerUiConfig(),
     strings: VideoPlayerStrings = VideoPlayerStrings(),
     colors: VideoPlayerColors = VideoPlayerColors(),
-    presentationController: PlayerPresentationController? = null,
-    onFullscreenRequest: (() -> Unit)? = null,
     onFullscreenChangeRequest: ((Boolean) -> Unit)? = null,
     isFullscreen: Boolean = false,
     overlayContent: @Composable BoxScope.(PlaybackState) -> Unit = {},
+    controlsContent: (@Composable BoxScope.(PlaybackState, PlayerUiActions) -> Unit)? = null,
+    loadingContent: (@Composable BoxScope.(PlaybackState) -> Unit)? = null,
+    errorContent: (@Composable BoxScope.(PlaybackError, PlayerUiActions) -> Unit)? = null,
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
-    val presentationState = presentationController
-        ?.state
-        ?.collectAsStateWithLifecycle()
-        ?.value
     val lifecycleOwner = LocalLifecycleOwner.current
     var controlsVisible by remember { mutableStateOf(true) }
     var controlsInteraction by remember { mutableIntStateOf(0) }
@@ -110,20 +103,15 @@ fun VideoPlayer(
         controlsInteraction++
     }
 
-    LaunchedEffect(source, autoPlay) {
-        source?.let { controller.setMediaIfChanged(it, autoPlay) }
+    LaunchedEffect(source, autoPlay, startPositionMs) {
+        source?.let { controller.setMediaIfChanged(it, autoPlay, startPositionMs) }
     }
 
-    DisposableEffect(controller, lifecycleOwner, presentationController) {
+    DisposableEffect(controller, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> controller.onHostStart()
-                Lifecycle.Event.ON_STOP -> controller.onHostStop(
-                    keepPlaying = presentationController
-                        ?.state
-                        ?.value
-                        ?.displayedMode == PlayerPresentationMode.FLOATING,
-                )
+                Lifecycle.Event.ON_STOP -> controller.onHostStop()
                 else -> Unit
             }
         }
@@ -137,6 +125,23 @@ fun VideoPlayer(
             controlsVisible = false
         }
     }
+
+    val playerActions = PlayerUiActions(
+        togglePlay = controller::togglePlayPause,
+        seekTo = controller::seekTo,
+        seekBy = controller::seekBy,
+        setVolume = controller::setVolume,
+        setPlaybackSpeed = controller::setPlaybackSpeed,
+        switchEngine = controller::switchEngine,
+        retry = controller::retry,
+        requestFullscreen = { fullscreen ->
+            if (onFullscreenChangeRequest != null) {
+                onFullscreenChangeRequest(fullscreen)
+            } else if (fullscreen) {
+                Unit
+            }
+        },
+    )
 
     Box(
         modifier = modifier
@@ -154,22 +159,29 @@ fun VideoPlayer(
         when (state.status) {
             PlaybackStatus.PREPARING,
             PlaybackStatus.BUFFERING,
-            -> LoadingOverlay(
-                state = state,
-                uiConfig = uiConfig,
-                strings = strings,
-                colors = colors,
-                modifier = Modifier
-                    .align(Alignment.Center)
-            )
+            -> if (loadingContent != null) {
+                loadingContent(state)
+            } else {
+                LoadingOverlay(
+                    state = state,
+                    uiConfig = uiConfig,
+                    strings = strings,
+                    colors = colors,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
 
-            PlaybackStatus.ERROR -> ErrorOverlay(
-                message = state.error?.message ?: strings.unknownError,
-                strings = strings,
-                colors = colors,
-                onRetry = controller::retry,
-                modifier = Modifier.align(Alignment.Center),
-            )
+            PlaybackStatus.ERROR -> if (errorContent != null && state.error != null) {
+                errorContent(state.error, playerActions)
+            } else {
+                ErrorOverlay(
+                    message = state.error?.message ?: strings.unknownError,
+                    strings = strings,
+                    colors = colors,
+                    onRetry = controller::retry,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
 
             else -> Unit
         }
@@ -180,27 +192,25 @@ fun VideoPlayer(
             visible = controlsVisible,
             modifier = Modifier.fillMaxSize(),
         ) {
-            PlayerControls(
-                state = state,
-                uiConfig = uiConfig,
-                strings = strings,
-                colors = colors,
-                presentationState = presentationState,
-                onInteraction = ::revealControls,
-                onTogglePlay = controller::togglePlayPause,
-                onSeek = controller::seekTo,
-                onSeekBy = controller::seekBy,
-                onVolume = controller::setVolume,
-                onSpeed = controller::setPlaybackSpeed,
-                onSwitchEngine = controller::switchEngine,
-                onRequestPresentationMode = { mode ->
-                    presentationController?.requestMode(mode)
-                },
-                onClose = { presentationController?.requestClose() },
-                onFullscreenRequest = onFullscreenRequest,
-                onFullscreenChangeRequest = onFullscreenChangeRequest,
-                isFullscreen = isFullscreen,
-            )
+            if (controlsContent != null) {
+                controlsContent(state, playerActions)
+            } else {
+                PlayerControls(
+                    state = state,
+                    uiConfig = uiConfig,
+                    strings = strings,
+                    colors = colors,
+                    onInteraction = ::revealControls,
+                    onTogglePlay = controller::togglePlayPause,
+                    onSeek = controller::seekTo,
+                    onSeekBy = controller::seekBy,
+                    onVolume = controller::setVolume,
+                    onSpeed = controller::setPlaybackSpeed,
+                    onSwitchEngine = controller::switchEngine,
+                    onFullscreenChangeRequest = onFullscreenChangeRequest,
+                    isFullscreen = isFullscreen,
+                )
+            }
         }
     }
 }
@@ -271,7 +281,6 @@ private fun PlayerControls(
     uiConfig: VideoPlayerUiConfig,
     strings: VideoPlayerStrings,
     colors: VideoPlayerColors,
-    presentationState: PlayerPresentationState?,
     onInteraction: () -> Unit,
     onTogglePlay: () -> Unit,
     onSeek: (Long) -> Unit,
@@ -279,9 +288,6 @@ private fun PlayerControls(
     onVolume: (Float) -> Unit,
     onSpeed: (Float) -> Unit,
     onSwitchEngine: (PlayerEngineType) -> Unit,
-    onRequestPresentationMode: (PlayerPresentationMode) -> Unit,
-    onClose: () -> Unit,
-    onFullscreenRequest: (() -> Unit)?,
     onFullscreenChangeRequest: ((Boolean) -> Unit)?,
     isFullscreen: Boolean,
 ) {
@@ -318,20 +324,6 @@ private fun PlayerControls(
                             label = { Text(if (type == PlayerEngineType.MEDIA3) "Exo" else "Ijk") },
                         )
                     }
-                }
-            }
-            if (
-                uiConfig.showPresentationControls &&
-                presentationState?.capabilities?.close == true
-            ) {
-                IconButton(
-                    onClick = {
-                        onInteraction()
-                        onClose()
-                    },
-                    enabled = !presentationState.hasPendingRequest && !presentationState.isClosed,
-                ) {
-                    Icon(Icons.Default.Close, strings.close, tint = colors.controlsContent)
                 }
             }
         }
@@ -449,20 +441,11 @@ private fun PlayerControls(
                 onInteraction = onInteraction,
                 onSpeed = onSpeed,
             )
-            if (uiConfig.showPresentationControls && presentationState != null) {
-                PresentationControls(
-                    state = presentationState,
-                    strings = strings,
-                    color = colors.controlsContent,
-                    onInteraction = onInteraction,
-                    onRequestMode = onRequestPresentationMode,
-                )
-            } else if (onFullscreenChangeRequest != null || (!isFullscreen && onFullscreenRequest != null)) {
+            if (onFullscreenChangeRequest != null) {
                 IconButton(
                     onClick = {
                         onInteraction()
-                        onFullscreenChangeRequest?.invoke(!isFullscreen)
-                            ?: onFullscreenRequest?.invoke()
+                        onFullscreenChangeRequest(!isFullscreen)
                     },
                 ) {
                     Icon(
@@ -476,52 +459,6 @@ private fun PlayerControls(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun PresentationControls(
-    state: PlayerPresentationState,
-    strings: VideoPlayerStrings,
-    color: Color,
-    onInteraction: () -> Unit,
-    onRequestMode: (PlayerPresentationMode) -> Unit,
-) {
-    val mode = state.displayedMode
-    val enabled = !state.hasPendingRequest && !state.isClosed
-
-    if (state.capabilities.floating && mode != PlayerPresentationMode.FLOATING) {
-        IconButton(
-            onClick = {
-                onInteraction()
-                onRequestMode(PlayerPresentationMode.FLOATING)
-            },
-            enabled = enabled,
-        ) {
-            Icon(Icons.Default.PictureInPictureAlt, strings.minimize, tint = color)
-        }
-    }
-    if (mode != PlayerPresentationMode.INLINE) {
-        IconButton(
-            onClick = {
-                onInteraction()
-                onRequestMode(PlayerPresentationMode.INLINE)
-            },
-            enabled = enabled,
-        ) {
-            Icon(Icons.Default.StayCurrentPortrait, strings.portrait, tint = color)
-        }
-    }
-    if (state.capabilities.fullscreen && mode != PlayerPresentationMode.FULLSCREEN) {
-        IconButton(
-            onClick = {
-                onInteraction()
-                onRequestMode(PlayerPresentationMode.FULLSCREEN)
-            },
-            enabled = enabled,
-        ) {
-            Icon(Icons.Default.Fullscreen, strings.fullscreen, tint = color)
         }
     }
 }
