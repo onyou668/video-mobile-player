@@ -13,6 +13,8 @@ player-compose ----> player-engine-media3 ----> player-core
 
 `PlaybackEngine` is the only interface an SDK adapter implements. `VideoPlayerController` owns engine replacement and state continuity. `VideoPlayer` renders only `PlaybackState` and emits controller commands.
 
+`VideoPlayerCache` is the engine-neutral persistence seam. The controller owns restore/save timing and uses `VideoSource.mediaId` as the stable key. Engine adapters only receive the resolved source and start position, so engine switching cannot fork progress state.
+
 ## Engine switching
 
 1. Read the current position and playback intent from the unified state.
@@ -22,6 +24,12 @@ player-compose ----> player-engine-media3 ----> player-core
 5. Prepare the same source at the captured position and restore play/pause intent.
 
 The old adapter cannot publish stale callbacks after replacement because the controller checks engine identity before accepting an emitted state.
+
+## Cache boundary
+
+`AppPrivateVideoPlayerCache` is the bundled adapter. It stores progress records separately from complete network media files. Local sources participate in progress persistence but bypass content caching. A complete cached network file is resolved to one local URI before an engine is prepared, allowing Media3 and IjkPlayer to consume the same bytes.
+
+The bundled media adapter intentionally handles progressive single-file downloads. HLS/DASH segment caching, encrypted downloads, or a local streaming proxy belong behind another `VideoPlayerCache` adapter; none of those details enter `VideoPlayerController` or an engine interface.
 
 ## Presentation boundary
 

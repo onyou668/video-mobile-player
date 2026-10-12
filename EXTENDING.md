@@ -23,6 +23,7 @@ MobilePlayer 将播放、展示和 UI 分为三个独立模块：
 - 具体播放器 SDK 只存在于对应 Adapter 内。
 - Activity、PiP、权限、Service 和导航继续由宿主负责。
 - 新功能优先消费 `PlaybackState`，避免直接读取 Media3/IjkPlayer 对象。
+- 播放进度和网络内容缓存通过 `VideoPlayerCache` 扩展，不在具体内核中各存一份。
 
 这种划分让播放控制保持为深模块：调用方只学习一套 Interface，切核、Surface 迁移和状态连续性都隐藏在 Implementation 内。
 

@@ -12,9 +12,12 @@ data class VideoSource(
     val type: Type,
     val headers: Map<String, String> = emptyMap(),
     val title: String? = null,
+    /** Stable business identifier used for progress and media caching. */
+    val mediaId: String = uri,
 ) {
     init {
         require(uri.isNotBlank()) { "Video source URI must not be blank" }
+        require(mediaId.isNotBlank()) { "Video source mediaId must not be blank" }
     }
 
     enum class Type {
@@ -23,16 +26,26 @@ data class VideoSource(
     }
 
     companion object {
-        fun local(uri: String, title: String? = null): VideoSource =
-            VideoSource(uri = uri, type = Type.LOCAL, title = title)
+        fun local(
+            uri: String,
+            title: String? = null,
+            mediaId: String = uri,
+        ): VideoSource = VideoSource(
+            uri = uri,
+            type = Type.LOCAL,
+            mediaId = mediaId,
+            title = title,
+        )
 
         fun network(
             url: String,
             headers: Map<String, String> = emptyMap(),
             title: String? = null,
+            mediaId: String = url,
         ): VideoSource = VideoSource(
             uri = url,
             type = Type.NETWORK,
+            mediaId = mediaId,
             headers = headers,
             title = title,
         )

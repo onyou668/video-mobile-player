@@ -8,6 +8,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import io.github.mobileplayer.core.PlaybackEngineFactory
 import io.github.mobileplayer.core.PlayerEngineType
+import io.github.mobileplayer.core.PlaybackProgressPolicy
+import io.github.mobileplayer.core.VideoPlayerCache
 import io.github.mobileplayer.core.VideoPlayerController
 import io.github.mobileplayer.ijk.IjkPlaybackEngineFactory
 import io.github.mobileplayer.media3.Media3PlaybackEngineFactory
@@ -21,6 +23,8 @@ fun createDefaultVideoPlayerController(
     context: Context,
     scope: CoroutineScope,
     initialEngine: PlayerEngineType = PlayerEngineType.MEDIA3,
+    cache: VideoPlayerCache? = null,
+    progressPolicy: PlaybackProgressPolicy = PlaybackProgressPolicy(),
 ): VideoPlayerController {
     val appContext = context.applicationContext
     return VideoPlayerController(
@@ -30,6 +34,8 @@ fun createDefaultVideoPlayerController(
             PlayerEngineType.IJK to IjkPlaybackEngineFactory(appContext),
         ),
         scope = scope,
+        cache = cache,
+        progressPolicy = progressPolicy,
     )
 }
 
@@ -37,14 +43,18 @@ fun createDefaultVideoPlayerController(
 @Composable
 fun rememberVideoPlayerController(
     initialEngine: PlayerEngineType = PlayerEngineType.MEDIA3,
+    cache: VideoPlayerCache? = null,
+    progressPolicy: PlaybackProgressPolicy = PlaybackProgressPolicy(),
 ): VideoPlayerController {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
-    val controller = remember(initialEngine, context, scope) {
+    val controller = remember(initialEngine, context, scope, cache, progressPolicy) {
         createDefaultVideoPlayerController(
             context = context,
             scope = scope,
             initialEngine = initialEngine,
+            cache = cache,
+            progressPolicy = progressPolicy,
         )
     }
 

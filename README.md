@@ -14,6 +14,8 @@
 | PiP/系统悬浮窗 | 已支持协议 | 宿主负责系统 API、权限和前台 Service |
 | 悬浮窗返回原模式 | 已支持 | 自动记住进入悬浮窗前的页面内或全屏模式 |
 | 网络加载速度 | 已支持 | 准备或缓冲时显示 `B/s`、`KB/s`、`MB/s` |
+| 播放进度持久化 | 已支持 | 按稳定 `mediaId` 自动恢复并节流保存，双内核共用 |
+| 网络内容缓存 | 已支持 | 完整文件缓存供 Media3/Ijk 共用；本地资源不重复缓存 |
 | 自定义弹幕覆盖层 | 可扩展 | 使用 Compose `Box` 叠加，详见 [EXTENDING.md](EXTENDING.md) |
 | MediaSession/音频焦点 | 尚未内置 | 建议由后续后台播放模块统一接入 |
 | Maven 发布 | 已配置 | 支持 JitPack 多模块坐标，也可同工程 `project` 依赖 |
@@ -24,7 +26,7 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| `player-core` | 视频源、统一状态、内核接口、播放控制和展示模式协议 |
+| `player-core` | 视频源、统一状态、内核接口、播放控制、进度与内容缓存、展示模式协议 |
 | `player-engine-media3` | Media3 ExoPlayer 适配器 |
 | `player-engine-ijk` | IjkPlayer 适配器及多 ABI 原生库 |
 | `player-compose` | Surface 生命周期、默认控制 UI 和双内核默认装配 |
@@ -102,6 +104,7 @@ fun VideoPage(url: String) {
 ```kotlin
 val source = VideoSource.network(
     url = "https://example.com/video.m3u8",
+    mediaId = "episode-42",
     headers = mapOf(
         "Authorization" to "Bearer token",
         "Referer" to "https://example.com/",
@@ -119,11 +122,70 @@ Media3 支持普通文件、HLS 和 DASH。IjkPlayer 实际支持的封装格式
 ```kotlin
 val source = VideoSource.local(
     uri = selectedUri.toString(),
+    mediaId = "local-video-42",
     title = "Local video",
 )
 ```
 
 如果 App 重启后仍要访问该 URI，选择文件时需要调用 `takePersistableUriPermission`。播放器库不会主动申请广泛存储权限。
+
+`mediaId` 是进度和内容缓存的稳定键。业务有自己的视频 ID 时应显式传入；未传时默认使用 URI。
+
+## 播放进度与内容缓存
+
+缓存通过 `VideoPlayerCache` 接口注入 Controller。默认的 `AppPrivateVideoPlayerCache` 将进度保存在应用私有 `SharedPreferences`，将完整网络文件放在应用私有缓存目录；卸载 App 后这些数据都会被系统移除。
+
+```kotlin
+class PlayerViewModel(application: Application) : AndroidViewModel(application) {
+    val cache = AppPrivateVideoPlayerCache(
+        context = application,
+        maxMediaCacheBytes = 512L * 1024L * 1024L,
+    )
+
+    val player = createDefaultVideoPlayerController(
+        context = application,
+        scope = viewModelScope,
+        cache = cache,
+    )
+}
+```
+
+播放一个资源时的起始进度优先级固定为：
+
+1. 调用方显式传入的 `startPositionMs`；传 `0L` 表示强制从头播放。
+2. `VideoPlayerCache` 中该 `mediaId` 的已保存进度。
+3. 没有记录时从 `0L` 开始。
+
+```kotlin
+player.setMedia(source, startPositionMs = 30_000L)
+
+VideoPlayer(
+    controller = player,
+    source = source,
+    startPositionMs = 30_000L,
+)
+```
+
+Controller 在播放过程中每 5 秒节流保存一次，并在暂停、Seek、切换资源、切换内核、宿主停止和关闭时强制保存。Media3 与 IjkPlayer 始终读取同一个 Controller 状态和同一个 `mediaId` 记录，不会产生两份进度。接近视频结尾 5 秒的记录默认视为已播完，下次从头开始；可通过 `PlaybackProgressPolicy` 调整。
+
+外部模块也可以直接操作缓存：
+
+```kotlin
+val progress = cache.getProgress(source.mediaId)
+cache.saveProgress(
+    PlaybackProgress(source.mediaId, positionMs = 30_000L, durationMs = 120_000L),
+)
+
+viewModelScope.launch {
+    player.cacheMedia(source) { download ->
+        val fraction = download.fraction
+    }
+    cache.remove(source.mediaId) // 同时删除该资源的进度和内容
+    cache.clear()                // 清空全部进度和内容
+}
+```
+
+本地 `content://`/文件资源只保存播放进度，不复制视频内容。网络内容缓存是显式的完整文件预缓存：完成后下一次加载会自动换成本地 URI，因此 Media3 和 IjkPlayer 都能使用同一份文件。默认实现适合 MP4 等渐进式单文件，不缓存 HLS/DASH 的分片；这类协议可以实现自定义 `VideoPlayerCache` adapter。
 
 ## 播放控制与状态
 
@@ -151,7 +213,7 @@ Text("speed=${state.networkSpeedBytesPerSecond} B/s")
 
 切换 Media3/Ijk 时会恢复当前视频源、进度、播放意图、音量和倍速。切核需要释放旧内核并重新准备新内核，因此会有一次短暂的 `PREPARING/BUFFERING`，不是无缝解码器热切换。
 
-`setMedia()` 会重新加载并从头开始；可重复创建的 UI 容器应使用 `setMediaIfChanged()`。`VideoPlayer` 内部已经使用后者，因此横竖屏、全屏和悬浮容器迁移不会把相同视频重置到 0。
+`setMedia()` 会重新加载，并按“显式进度 -> 缓存进度 -> 0”的顺序决定起点；可重复创建的 UI 容器应使用 `setMediaIfChanged()`。`VideoPlayer` 内部已经使用后者，因此横竖屏、全屏和悬浮容器迁移不会重置相同视频。
 
 ## Controller 生命周期
 

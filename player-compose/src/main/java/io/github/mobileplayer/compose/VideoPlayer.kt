@@ -85,6 +85,7 @@ fun VideoPlayer(
     modifier: Modifier = Modifier,
     source: VideoSource? = null,
     autoPlay: Boolean = true,
+    startPositionMs: Long? = null,
     uiConfig: VideoPlayerUiConfig = VideoPlayerUiConfig(),
     strings: VideoPlayerStrings = VideoPlayerStrings(),
     colors: VideoPlayerColors = VideoPlayerColors(),
@@ -105,8 +106,8 @@ fun VideoPlayer(
         controlsInteraction++
     }
 
-    LaunchedEffect(source) {
-        source?.let { controller.setMediaIfChanged(it, autoPlay) }
+    LaunchedEffect(source, startPositionMs) {
+        source?.let { controller.setMediaIfChanged(it, autoPlay, startPositionMs) }
     }
 
     DisposableEffect(controller, lifecycleOwner, presentationController) {
