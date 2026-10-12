@@ -16,7 +16,7 @@
 | 网络加载速度 | 已支持 | 准备或缓冲时显示 `B/s`、`KB/s`、`MB/s` |
 | 自定义弹幕覆盖层 | 可扩展 | 使用 Compose `Box` 叠加，详见 [EXTENDING.md](EXTENDING.md) |
 | MediaSession/音频焦点 | 尚未内置 | 建议由后续后台播放模块统一接入 |
-| Maven 发布 | 尚未配置 | 当前可通过同工程 `project` 依赖接入 |
+| Maven 发布 | 已配置 | 支持 JitPack 多模块坐标，也可同工程 `project` 依赖 |
 
 最低 Android 版本为 API 23，compile SDK 为 36。
 
@@ -35,13 +35,35 @@
 
 ## 接入
 
-当前仓库还没有 Maven 发布配置。同一 Gradle 工程中的 App 可以直接依赖：
+同一 Gradle 工程中的 App 可以直接依赖：
 
 ```kotlin
 dependencies {
     implementation(project(":player-compose"))
 }
 ```
+
+外部 Android/Flutter/React Native 工程可以添加 JitPack 仓库，并使用 Git 标签或提交哈希作为版本：
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven("https://jitpack.io")
+    }
+}
+```
+
+```kotlin
+dependencies {
+    implementation(
+        "com.github.onyou668.video-mobile-player:player-compose:<tag-or-commit>",
+    )
+}
+```
+
+正式发布建议使用不可变 Git 标签；提交哈希适合联调和插件锁定底层版本。
 
 网络权限会从播放器内核 AAR 的 manifest 合并到宿主。HTTP 明文地址仍需宿主根据安全策略配置 `networkSecurityConfig`，生产环境建议使用 HTTPS。
 
