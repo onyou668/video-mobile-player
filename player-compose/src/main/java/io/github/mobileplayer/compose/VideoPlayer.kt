@@ -156,6 +156,7 @@ fun VideoPlayer(
             modifier = Modifier.align(Alignment.Center),
         )
 
+        val playbackError = state.error
         when (state.status) {
             PlaybackStatus.PREPARING,
             PlaybackStatus.BUFFERING,
@@ -171,8 +172,8 @@ fun VideoPlayer(
                 )
             }
 
-            PlaybackStatus.ERROR -> if (errorContent != null && state.error != null) {
-                errorContent(state.error, playerActions)
+            PlaybackStatus.ERROR -> if (errorContent != null && playbackError != null) {
+                errorContent(playbackError, playerActions)
             } else {
                 ErrorOverlay(
                     message = state.error?.message ?: strings.unknownError,
