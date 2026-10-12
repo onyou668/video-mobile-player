@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -91,6 +92,7 @@ fun VideoPlayer(
     colors: VideoPlayerColors = VideoPlayerColors(),
     presentationController: PlayerPresentationController? = null,
     onFullscreenRequest: (() -> Unit)? = null,
+    overlayContent: @Composable BoxScope.(PlaybackState) -> Unit = {},
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
     val presentationState = presentationController
@@ -169,6 +171,8 @@ fun VideoPlayer(
 
             else -> Unit
         }
+
+        overlayContent(state)
 
         AnimatedVisibility(
             visible = controlsVisible,

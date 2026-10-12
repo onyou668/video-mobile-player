@@ -153,6 +153,31 @@ class VideoPlayerControllerTest {
     }
 
     @Test
+    fun hostCanReplaceUrlAndTitleThroughController() = runTest {
+        val media3 = FakeEngine()
+        val controller = controller(media3, FakeEngine())
+        val first = VideoSource.network(
+            url = "https://example.com/episode-1.mp4",
+            title = "Episode 1",
+            mediaId = "episode-1",
+        )
+        val second = VideoSource.network(
+            url = "https://example.com/episode-2.mp4",
+            title = "Episode 2",
+            mediaId = "episode-2",
+        )
+
+        controller.setMedia(first)
+        controller.setMedia(second, startPositionMs = 5_000L)
+
+        assertEquals(2, media3.prepareCalls)
+        assertEquals(second, controller.state.value.source)
+        assertEquals("Episode 2", controller.state.value.source?.title)
+        assertEquals(5_000L, controller.state.value.positionMs)
+        controller.close()
+    }
+
+    @Test
     fun switchingEngineRestoresPlaybackConfiguration() = runTest {
         val media3 = FakeEngine()
         val ijk = FakeEngine()

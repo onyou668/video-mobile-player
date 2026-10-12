@@ -35,9 +35,9 @@ The proxy binds only to `127.0.0.1` and uses an unguessable per-process path tok
 
 ## Presentation boundary
 
-`PlayerPresentationController` models `INLINE`, `FULLSCREEN`, and `FLOATING` separately from playback. It emits a `PlayerPresentationRequest`; the host owns orientation, immersive window flags, PiP, overlay permission, foreground service, and close behavior. The host confirms a successful transition or rejects it while retaining the previous mode.
+`PlayerPresentationController` models `INLINE`, `FULLSCREEN`, and `FLOATING` separately from playback. `VideoPlayerHost` is the bundled Compose adapter for the common `INLINE <-> FULLSCREEN` transition: it moves the same controller-backed surface into a fullscreen dialog, requests landscape orientation, manages immersive system bars, and restores the prior orientation on exit. PiP, overlay permission, foreground service, custom containers, and close behavior remain external adapters driven by `PlayerPresentationRequest`.
 
-This request/confirmation boundary keeps platform window operations out of the playback controller and supports asynchronous transitions such as permission prompts and PiP callbacks.
+This request/confirmation seam keeps platform window operations out of the playback controller and supports asynchronous transitions such as permission prompts and PiP callbacks. Business detail pages remain outside the module; they only size `VideoPlayerHost` and issue commands through `VideoPlayerController`.
 
 ## Extension point
 

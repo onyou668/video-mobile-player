@@ -21,7 +21,7 @@ MobilePlayer 将播放、展示和 UI 分为三个独立模块：
 - 播放状态只由 `VideoPlayerController` 持有。
 - 横竖屏、全屏和悬浮只迁移 UI 与 Surface，不创建新的播放会话。
 - 具体播放器 SDK 只存在于对应 Adapter 内。
-- Activity、PiP、权限、Service 和导航继续由宿主负责。
+- 默认页面内/横屏全屏由 `VideoPlayerHost` 负责；PiP、权限、Service 和导航继续由宿主负责。
 - 新功能优先消费 `PlaybackState`，避免直接读取 Media3/IjkPlayer 对象。
 - 播放进度和网络内容缓存通过 `VideoPlayerCache` 扩展，不在具体内核中各存一份。
 
@@ -31,8 +31,9 @@ MobilePlayer 将播放、展示和 UI 分为三个独立模块：
 
 | 需求 | 推荐扩展位置 | 是否需要修改核心 |
 | --- | --- | --- |
-| 弹幕、水印、字幕覆盖层 | Compose 包装层 | 否 |
+| 弹幕、水印、字幕覆盖层 | `overlayContent` slot | 否 |
 | 自定义加载/网速展示 | 读取 `PlaybackState` 的 Compose UI | 否 |
+| 默认横屏全屏 | `VideoPlayerHost` | 否 |
 | 自定义全屏策略 | 宿主处理 `PlayerPresentationRequest` | 否 |
 | Android PiP | 宿主 Activity Adapter | 否 |
 | 系统悬浮窗 | 前台 Service + WindowManager Adapter | 否 |
@@ -44,7 +45,7 @@ MobilePlayer 将播放、展示和 UI 分为三个独立模块：
 
 ## 弹幕扩展
 
-当前最简单的方式是在同一个 `Box` 中把弹幕绘制在 `VideoPlayer` 上方：
+通过 `overlayContent` 把弹幕绘制在播放器 Surface 上方。`VideoPlayerHost` 会把同一个 slot 同时用于页面内和全屏容器：
 
 ```kotlin
 @Composable
@@ -53,22 +54,19 @@ fun DanmakuVideoPlayer(
     source: VideoSource,
     danmaku: List<DanmakuItem>,
 ) {
-    val playback by controller.state.collectAsStateWithLifecycle()
-
-    Box {
-        VideoPlayer(
-            controller = controller,
-            source = source,
-            modifier = Modifier.fillMaxSize(),
-        )
-
-        DanmakuLayer(
-            items = danmaku,
-            positionMs = playback.positionMs,
-            isPlaying = playback.isPlaying,
-            modifier = Modifier.fillMaxSize(),
-        )
-    }
+    VideoPlayerHost(
+        controller = controller,
+        source = source,
+        modifier = Modifier.fillMaxSize(),
+        overlayContent = { playback ->
+            DanmakuLayer(
+                items = danmaku,
+                positionMs = playback.positionMs,
+                isPlaying = playback.isPlaying,
+                modifier = Modifier.fillMaxSize(),
+            )
+        },
+    )
 }
 ```
 
@@ -83,7 +81,7 @@ fun DanmakuVideoPlayer(
 
 页面内、全屏和悬浮窗需要复用同一个弹幕状态持有者，方式与共享 `VideoPlayerController` 相同。这样切换展示模式时弹幕时间轴也不会重置。
 
-如果后续需要让弹幕严格裁剪到实际视频画面、替换内置控制层或插入多个有层级的覆盖层，建议在 `player-compose` 中开放稳定的 `overlayContent`/`controlsContent` slot，而不是让业务依赖私有的 `VideoSurface`。
+弹幕等业务扩展应继续使用稳定的 `overlayContent` slot，不要依赖私有的 `VideoSurface`。完全替换内置控制层属于后续独立的 `controlsContent` 扩展，不应把业务页面放进播放器模块。
 
 ## 自定义加载与网速 UI
 
@@ -96,34 +94,31 @@ playbackState.networkSpeedBytesPerSecond
 业务可以关闭默认网速文字，并自行渲染：
 
 ```kotlin
-val state by controller.state.collectAsStateWithLifecycle()
-
-Box {
-    VideoPlayer(
-        controller = controller,
-        source = source,
-        uiConfig = VideoPlayerUiConfig(
-            showNetworkSpeedWhileLoading = false,
-        ),
-    )
-
-    if (
-        source.type == VideoSource.Type.NETWORK &&
-        state.status in setOf(PlaybackStatus.PREPARING, PlaybackStatus.BUFFERING)
-    ) {
-        NetworkLoadingIndicator(
-            bytesPerSecond = state.networkSpeedBytesPerSecond,
-            modifier = Modifier.align(Alignment.Center),
-        )
-    }
-}
+VideoPlayerHost(
+    controller = controller,
+    source = source,
+    uiConfig = VideoPlayerUiConfig(
+        showNetworkSpeedWhileLoading = false,
+    ),
+    overlayContent = { state ->
+        if (
+            source.type == VideoSource.Type.NETWORK &&
+            state.status in setOf(PlaybackStatus.PREPARING, PlaybackStatus.BUFFERING)
+        ) {
+            NetworkLoadingIndicator(
+                bytesPerSecond = state.networkSpeedBytesPerSecond,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
+    },
+)
 ```
 
 不要使用系统全局流量差值代替播放器吞吐量，否则 App 中的图片、接口请求也会被计入。
 
 ## 自定义全屏策略
 
-`PlayerPresentationController` 的 Interface 是请求/确认协议。宿主可以自由选择：
+普通嵌入场景直接使用 `VideoPlayerHost`，它已经实现区域内播放、横屏沉浸式全屏和返回原位置。只有 App 需要不同策略时，才使用 `PlayerPresentationController` 的请求/确认 Interface 自行选择：
 
 - 同一个 Activity 内切换 Compose 布局。
 - 导航到独立播放 Activity。

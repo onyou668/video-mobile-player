@@ -10,13 +10,13 @@
 | 本地视频 | 已支持 | 推荐使用 `content://` URI |
 | Media3/Ijk 切换 | 已支持 | 保留视频源、进度、播放意图、音量、倍速和 Surface |
 | 页面内竖屏播放 | 已支持 | `INLINE` 展示模式 |
-| 横屏全屏播放 | 已支持协议 | 宿主负责方向和沉浸式窗口 |
+| 横屏全屏播放 | 已支持 | `VideoPlayerHost` 自动横屏、沉浸式全屏并返回页面内原位置 |
 | PiP/系统悬浮窗 | 已支持协议 | 宿主负责系统 API、权限和前台 Service |
 | 悬浮窗返回原模式 | 已支持 | 自动记住进入悬浮窗前的页面内或全屏模式 |
 | 网络加载速度 | 已支持 | 准备或缓冲时显示 `B/s`、`KB/s`、`MB/s` |
 | 播放进度持久化 | 已支持 | 按稳定 `mediaId` 自动恢复并节流保存，双内核共用 |
 | 网络内容缓存 | 已支持 | 渐进式文件边播边存、按 Range 分段复用，Media3/Ijk 共用 |
-| 自定义弹幕覆盖层 | 可扩展 | 使用 Compose `Box` 叠加，详见 [EXTENDING.md](EXTENDING.md) |
+| 自定义弹幕覆盖层 | 已预留 | 使用 `overlayContent` slot，页面内和全屏共用，详见 [EXTENDING.md](EXTENDING.md) |
 | MediaSession/音频焦点 | 尚未内置 | 建议由后续后台播放模块统一接入 |
 | Maven 发布 | 已配置 | 支持 JitPack 多模块坐标，也可同工程 `project` 依赖 |
 
@@ -29,9 +29,9 @@
 | `player-core` | 视频源、统一状态、内核接口、播放控制、进度与内容缓存、展示模式协议 |
 | `player-engine-media3` | Media3 ExoPlayer 适配器 |
 | `player-engine-ijk` | IjkPlayer 适配器及多 ABI 原生库 |
-| `player-compose` | Surface 生命周期、默认控制 UI 和双内核默认装配 |
+| `player-compose` | 页面内/全屏 Host、Surface 生命周期、默认控制 UI 和双内核默认装配 |
 
-依赖方向固定为 `player-compose -> engine -> core`。播放实现不负责 Activity 方向、PiP 权限或业务页面导航。
+依赖方向固定为 `player-compose -> engine -> core`。`VideoPlayerHost` 提供默认横屏全屏实现；播放内核不负责 Activity 方向、PiP 权限或业务页面导航。
 
 更详细的模块说明见 [ARCHITECTURE.md](ARCHITECTURE.md)，扩展方式见 [EXTENDING.md](EXTENDING.md)。
 
@@ -60,34 +60,30 @@ dependencyResolutionManagement {
 ```kotlin
 dependencies {
     implementation(
-        "com.github.onyou668.video-mobile-player:player-compose:v0.1.0",
+        "com.github.onyou668.video-mobile-player:player-compose:v0.2.0",
     )
 }
 ```
 
-正式发布使用不可变 Git 标签。Flutter/React Native 插件的 submodule 当前固定到主库 `v0.1.0` 对应提交；主库升级后，插件必须先更新 submodule 并通过 CI，再发布自己的新 tag。调用方只依赖 Android、Flutter 或 React Native 对应仓库的 tag，不依赖开发分支。
+正式发布使用不可变 Git 标签。Flutter/React Native 插件的 `v0.2.0` submodule 固定到主库 `v0.2.0` 对应提交；主库升级后，插件必须先更新 submodule 并通过 CI，再发布自己的新 tag。调用方只依赖 Android、Flutter 或 React Native 对应仓库的 tag，不依赖开发分支。
 
 网络权限会从播放器内核 AAR 的 manifest 合并到宿主。HTTP 明文地址仍需宿主根据安全策略配置 `networkSecurityConfig`，生产环境建议使用 HTTPS。
 
-## 最小示例
+## 可嵌入的播放器窗口
+
+`VideoPlayerHost` 就是对外提供的播放器窗口，只占用宿主指定的区域。库不实现详情、评论、剧集列表、推荐或导航页面。点击窗口内的全屏按钮后，组件自动把同一播放会话迁移到横屏沉浸式全屏，退出后回到宿主原先分配的区域。
 
 ```kotlin
 @Composable
-fun VideoPage(url: String) {
-    val player = rememberVideoPlayerController(
-        initialEngine = PlayerEngineType.MEDIA3,
-    )
-    val source = remember(url) {
-        VideoSource.network(
-            url = url,
-            headers = mapOf("Authorization" to "Bearer ..."),
-            title = "Video title",
-        )
-    }
-
-    VideoPlayer(
-        controller = player,
-        source = source,
+fun PlayerWindow(
+    controller: VideoPlayerController,
+    video: HostVideo,
+) {
+    VideoPlayerHost(
+        controller = controller,
+        url = video.url,
+        title = video.title,
+        mediaId = video.id,
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(16f / 9f),
@@ -95,7 +91,55 @@ fun VideoPage(url: String) {
 }
 ```
 
-`rememberVideoPlayerController()` 会随当前 Composable 销毁，适合不需要跨 Activity 重建或跨页面继续播放的普通页面。
+宿主也可以让 Controller 成为唯一的视频源状态。此时 Host 不传 `source/url`，宿主的任意业务操作都可以直接切换播放地址或内核：
+
+```kotlin
+class HostPlayerViewModel(application: Application) : AndroidViewModel(application) {
+    val player = createDefaultVideoPlayerController(
+        context = application,
+        scope = viewModelScope,
+        initialEngine = PlayerEngineType.MEDIA3,
+    )
+
+    fun play(video: HostVideo) {
+        player.setMedia(
+            VideoSource.network(
+                url = video.url,
+                title = video.title,
+                mediaId = video.id,
+            ),
+        )
+    }
+
+    fun useIjk() = player.switchEngine(PlayerEngineType.IJK)
+    fun useMedia3() = player.switchEngine(PlayerEngineType.MEDIA3)
+
+    override fun onCleared() = player.close()
+}
+
+@Composable
+fun PlayerWindow(viewModel: HostPlayerViewModel) {
+    VideoPlayerHost(
+        controller = viewModel.player,
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f),
+    )
+}
+```
+
+`VideoPlayerController` 对宿主公开的常用控制包括：
+
+| 调用 | 用途 |
+| --- | --- |
+| `setMedia(source, playWhenReady, startPositionMs)` | 切换播放地址、标题和业务资源 ID |
+| `play()` / `pause()` / `togglePlayPause()` | 播放控制 |
+| `seekTo()` / `seekBy()` | 进度控制 |
+| `switchEngine()` | 外部切换 Media3/Ijk，保留当前进度和播放意图 |
+| `setPlaybackSpeed()` / `setVolume()` | 倍速和音量 |
+| `state` | 获取当前地址、标题、内核、进度、缓冲、网速和错误 |
+
+横屏切换可能触发 Activity 重建，因此需要保证 Controller 的生命周期长于播放器 Composable。建议由 Activity 级 ViewModel 持有；不要为页面内和全屏状态分别创建 Controller。
 
 ## 视频源
 
@@ -292,7 +336,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
 ## 页面内、全屏与悬浮窗
 
-`PlayerPresentationController` 只管理展示状态和请求，不直接操作 Activity 或系统权限：
+`VideoPlayerHost` 默认处理页面内与横屏全屏两种展示；业务只需要决定播放器在页面中的尺寸。`PlayerPresentationController` 保存展示状态，并为需要接管 PiP、系统悬浮窗或自定义全屏容器的 App 提供请求协议：
 
 - `INLINE`：页面内区域，通常配合竖屏。
 - `FULLSCREEN`：全窗口区域，通常配合横屏和沉浸模式。
@@ -322,12 +366,12 @@ val presentation = rememberPlayerPresentationController(
     startupMode = PlayerPresentationMode.INLINE,
     capabilities = PlayerPresentationCapabilities(
         fullscreen = true,
-        floating = true,
-        close = true,
+        floating = false,
+        close = false,
     ),
 )
 
-VideoPlayer(
+VideoPlayerHost(
     controller = player,
     source = source,
     presentationController = presentation,
@@ -337,28 +381,29 @@ VideoPlayer(
 )
 ```
 
-### 宿主处理展示请求
+标准 `VideoPlayerHost` 会消费 `INLINE/FULLSCREEN` 请求，创建全屏 Dialog、切换横屏、隐藏系统栏，并在退出时恢复进入全屏前的方向。`PlayerFullscreenOrientation.UNCHANGED` 可关闭自动方向切换。
 
-每个请求都必须在平台操作完成后调用 `confirmMode()`/`confirmClosed()`，失败时调用 `rejectPendingRequest()`。请求未完成期间新的展示请求会被拒绝。
+### 宿主接管 PiP、悬浮窗或自定义容器
+
+PiP 和系统悬浮窗涉及权限、前台 Service 与 App 生命周期，继续由宿主 Adapter 处理。使用 `VideoPlayerHost` 时通过 `onExternalPresentationRequest` 接收 `FLOATING/CLOSE` 请求；使用原始 `VideoPlayer` 时也可以自行收集全部请求。平台操作完成后调用 `confirmMode()`/`confirmClosed()`，失败时调用 `rejectPendingRequest()`。
 
 ```kotlin
-LaunchedEffect(presentation, activity) {
-    presentation.requests.collect { request ->
+val presentation = rememberPlayerPresentationController(
+    capabilities = PlayerPresentationCapabilities(
+        fullscreen = true,
+        floating = true,
+        close = true,
+    ),
+)
+
+VideoPlayerHost(
+    controller = player,
+    source = source,
+    presentationController = presentation,
+    onExternalPresentationRequest = { request ->
         when (request) {
-            is PlayerPresentationRequest.ChangeMode -> when (request.to) {
-                PlayerPresentationMode.INLINE -> {
-                    activity.requestedOrientation =
-                        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    presentation.confirmMode(PlayerPresentationMode.INLINE)
-                }
-
-                PlayerPresentationMode.FULLSCREEN -> {
-                    activity.requestedOrientation =
-                        ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                    presentation.confirmMode(PlayerPresentationMode.FULLSCREEN)
-                }
-
-                PlayerPresentationMode.FLOATING -> {
+            is PlayerPresentationRequest.ChangeMode -> {
+                if (request.to == PlayerPresentationMode.FLOATING) {
                     val entered = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                         activity.enterPictureInPictureMode(
                             PictureInPictureParams.Builder().build(),
@@ -376,8 +421,11 @@ LaunchedEffect(presentation, activity) {
                 presentation.confirmClosed()
             }
         }
-    }
-}
+    },
+    modifier = Modifier
+        .fillMaxWidth()
+        .aspectRatio(16f / 9f),
+)
 ```
 
 ### PiP 配置与返回
