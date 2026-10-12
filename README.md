@@ -60,12 +60,12 @@ dependencyResolutionManagement {
 ```kotlin
 dependencies {
     implementation(
-        "com.github.onyou668.video-mobile-player:player-compose:<tag-or-commit>",
+        "com.github.onyou668.video-mobile-player:player-compose:v0.1.0",
     )
 }
 ```
 
-正式发布建议使用不可变 Git 标签；提交哈希适合联调和插件锁定底层版本。
+正式发布使用不可变 Git 标签。Flutter/React Native 插件的 submodule 当前固定到主库 `v0.1.0` 对应提交；主库升级后，插件必须先更新 submodule 并通过 CI，再发布自己的新 tag。调用方只依赖 Android、Flutter 或 React Native 对应仓库的 tag，不依赖开发分支。
 
 网络权限会从播放器内核 AAR 的 manifest 合并到宿主。HTTP 明文地址仍需宿主根据安全策略配置 `networkSecurityConfig`，生产环境建议使用 HTTPS。
 
