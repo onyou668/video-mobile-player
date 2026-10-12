@@ -140,6 +140,8 @@ VideoPlayerHost(
 
 `VideoPlayerCache` 是播放进度和内容缓存的统一 seam，但两类数据在 Implementation 内应保持独立：进度是按 `mediaId` 保存的小记录，媒体内容是可淘汰的大文件。Controller 只负责恢复/保存时机和解析播放源，具体内核不应直接访问缓存。
 
+`mediaId` 由 `VideoSource` 根据来源类型与完整 URI 自动生成，宿主不负责构造，也不能通过公开 factory 覆盖。自定义缓存 Adapter 应把它当作不透明键；标题和请求头不参与身份计算，URI 变化会得到新键。
+
 自定义 Adapter 必须保持以下语义：
 
 - `getProgress()`/`saveProgress()` 必须快速且同步，不能在主线程执行网络请求。
@@ -215,7 +217,7 @@ Adapter 必须满足这些不变量：
 - `state` 始终可以读取，回调统一转换为 `EnginePlaybackState`。
 - 所有时间单位均为毫秒。
 - `networkSpeedBytesPerSecond` 使用字节每秒，不是 bit/s。
-- `prepare()` 必须支持指定起始位置和播放意图。
+- `prepare()` 必须支持 Controller 指定的起始位置和播放意图；该参数是内部内核 seam，不是宿主传入的起播参数。
 - `setSurface(null)` 只解绑画面，不能重置媒体或进度。
 - `release()` 必须幂等，释放后不再发布有效状态。
 - 错误通过 `PlaybackStatus.ERROR` 和 `PlaybackError` 上报。

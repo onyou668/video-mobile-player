@@ -20,7 +20,7 @@ class VideoPlayerControllerTest {
         val controller = controller(media3, FakeEngine(), FakeVideoPlayerCache())
 
         controller.setMedia(
-            VideoSource.local("content://media/video/42", mediaId = "local-42"),
+            VideoSource.local("content://media/video/42"),
         )
 
         assertEquals(0L, media3.preparedPositionMs)
@@ -29,36 +29,34 @@ class VideoPlayerControllerTest {
     }
 
     @Test
-    fun explicitStartPositionTakesPriorityOverCachedProgress() = runTest {
+    fun cachedProgressIsRestoredAutomatically() = runTest {
+        val source = VideoSource.network("https://example.com/episode-1.mp4")
         val cache = FakeVideoPlayerCache().apply {
-            saveProgress(PlaybackProgress("episode-1", positionMs = 25_000L, durationMs = 90_000L))
+            saveProgress(
+                PlaybackProgress(source.mediaId, positionMs = 25_000L, durationMs = 90_000L),
+            )
         }
         val media3 = FakeEngine()
         val controller = controller(media3, FakeEngine(), cache)
-        val source = VideoSource.network(
-            url = "https://example.com/episode-1.mp4",
-            mediaId = "episode-1",
-        )
 
-        controller.setMedia(source, startPositionMs = 12_000L)
+        controller.setMedia(source)
 
-        assertEquals(12_000L, media3.preparedPositionMs)
-        assertEquals(12_000L, controller.state.value.positionMs)
+        assertEquals(25_000L, media3.preparedPositionMs)
+        assertEquals(25_000L, controller.state.value.positionMs)
         controller.close()
     }
 
     @Test
     fun cachedProgressIsSharedAcrossEngineSwitches() = runTest {
+        val source = VideoSource.network("https://example.com/episode-2.mp4")
         val cache = FakeVideoPlayerCache().apply {
-            saveProgress(PlaybackProgress("episode-2", positionMs = 31_000L, durationMs = 100_000L))
+            saveProgress(
+                PlaybackProgress(source.mediaId, positionMs = 31_000L, durationMs = 100_000L),
+            )
         }
         val media3 = FakeEngine()
         val ijk = FakeEngine()
         val controller = controller(media3, ijk, cache)
-        val source = VideoSource.network(
-            url = "https://example.com/episode-2.mp4",
-            mediaId = "episode-2",
-        )
 
         controller.setMedia(source)
         media3.emit(
@@ -73,17 +71,14 @@ class VideoPlayerControllerTest {
         controller.switchEngine(PlayerEngineType.IJK)
 
         assertEquals(38_000L, ijk.preparedPositionMs)
-        assertEquals(38_000L, cache.getProgress("episode-2")?.positionMs)
+        assertEquals(38_000L, cache.getProgress(source.mediaId)?.positionMs)
         assertEquals(PlayerEngineType.IJK, controller.state.value.engineType)
         controller.close()
     }
 
     @Test
     fun resolvedCacheSourceIsSharedAcrossEngineSwitches() = runTest {
-        val source = VideoSource.network(
-            url = "https://example.com/movie.mp4",
-            mediaId = "cached-movie",
-        )
+        val source = VideoSource.network("https://example.com/movie.mp4")
         val cachedSource = source.copy(
             uri = "file:///cache/cached-movie.media",
             type = VideoSource.Type.LOCAL,
@@ -114,15 +109,16 @@ class VideoPlayerControllerTest {
 
     @Test
     fun completedCachedProgressRestartsFromBeginning() = runTest {
+        val source = VideoSource.network("https://example.com/movie.mp4")
         val cache = FakeVideoPlayerCache().apply {
-            saveProgress(PlaybackProgress("movie", positionMs = 98_000L, durationMs = 100_000L))
+            saveProgress(
+                PlaybackProgress(source.mediaId, positionMs = 98_000L, durationMs = 100_000L),
+            )
         }
         val media3 = FakeEngine()
         val controller = controller(media3, FakeEngine(), cache)
 
-        controller.setMedia(
-            VideoSource.network("https://example.com/movie.mp4", mediaId = "movie"),
-        )
+        controller.setMedia(source)
 
         assertEquals(0L, media3.preparedPositionMs)
         controller.close()
@@ -159,21 +155,19 @@ class VideoPlayerControllerTest {
         val first = VideoSource.network(
             url = "https://example.com/episode-1.mp4",
             title = "Episode 1",
-            mediaId = "episode-1",
         )
         val second = VideoSource.network(
             url = "https://example.com/episode-2.mp4",
             title = "Episode 2",
-            mediaId = "episode-2",
         )
 
         controller.setMedia(first)
-        controller.setMedia(second, startPositionMs = 5_000L)
+        controller.setMedia(second)
 
         assertEquals(2, media3.prepareCalls)
         assertEquals(second, controller.state.value.source)
         assertEquals("Episode 2", controller.state.value.source?.title)
-        assertEquals(5_000L, controller.state.value.positionMs)
+        assertEquals(0L, controller.state.value.positionMs)
         controller.close()
     }
 

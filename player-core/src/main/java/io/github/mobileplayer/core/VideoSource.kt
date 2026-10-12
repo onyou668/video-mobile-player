@@ -1,5 +1,8 @@
 package io.github.mobileplayer.core
 
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+
 /**
  * A media location understood by every engine.
  *
@@ -7,13 +10,14 @@ package io.github.mobileplayer.core
  * photo picker or storage access framework. Network sources may include HTTP
  * headers such as authorization or referer values.
  */
-data class VideoSource(
+@ConsistentCopyVisibility
+data class VideoSource internal constructor(
     val uri: String,
     val type: Type,
     val headers: Map<String, String> = emptyMap(),
     val title: String? = null,
-    /** Stable business identifier used for progress and media caching. */
-    val mediaId: String = uri,
+    /** Stable opaque identifier generated from the source type and URI. */
+    val mediaId: String = generateMediaId(uri, type),
     /** Controls whether progressive network bytes may be persisted locally. */
     val contentCachePolicy: ContentCachePolicy = ContentCachePolicy.AUTO,
 ) {
@@ -39,11 +43,9 @@ data class VideoSource(
         fun local(
             uri: String,
             title: String? = null,
-            mediaId: String = uri,
         ): VideoSource = VideoSource(
             uri = uri,
             type = Type.LOCAL,
-            mediaId = mediaId,
             title = title,
         )
 
@@ -51,15 +53,20 @@ data class VideoSource(
             url: String,
             headers: Map<String, String> = emptyMap(),
             title: String? = null,
-            mediaId: String = url,
             contentCachePolicy: ContentCachePolicy = ContentCachePolicy.AUTO,
         ): VideoSource = VideoSource(
             uri = url,
             type = Type.NETWORK,
-            mediaId = mediaId,
             headers = headers,
             title = title,
             contentCachePolicy = contentCachePolicy,
         )
+
+        private fun generateMediaId(uri: String, type: Type): String {
+            val identity = "${type.name}:$uri"
+            return MessageDigest.getInstance("SHA-256")
+                .digest(identity.toByteArray(StandardCharsets.UTF_8))
+                .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+        }
     }
 }

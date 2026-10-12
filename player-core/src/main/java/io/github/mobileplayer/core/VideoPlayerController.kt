@@ -45,20 +45,16 @@ class VideoPlayerController(
         replaceEngine(initialEngine, restorePositionMs = 0L, restorePlayback = false)
     }
 
-    /**
-     * Loads [source]. An explicit [startPositionMs] takes priority over cached
-     * progress. Passing zero explicitly always starts from the beginning.
-     */
+    /** Loads [source] and restores its starting position from the shared cache. */
     fun setMedia(
         source: VideoSource,
         playWhenReady: Boolean = true,
-        startPositionMs: Long? = null,
     ) {
         checkOpen()
         persistProgress(force = true)
         this.source = source
         this.playWhenReady = playWhenReady
-        val restoredPositionMs = resolveStartPosition(source, startPositionMs)
+        val restoredPositionMs = resolveStartPosition(source)
         lastSavedPositionMs = restoredPositionMs
         if (hostStopped && playWhenReady) resumeAfterHostStart = true
         mutableState.value = mutableState.value.copy(
@@ -88,11 +84,10 @@ class VideoPlayerController(
     fun setMediaIfChanged(
         source: VideoSource,
         playWhenReady: Boolean = true,
-        startPositionMs: Long? = null,
     ): Boolean {
         checkOpen()
         if (this.source == source) return false
-        setMedia(source, playWhenReady, startPositionMs)
+        setMedia(source, playWhenReady)
         return true
     }
 
@@ -289,8 +284,7 @@ class VideoPlayerController(
         }
     }
 
-    private fun resolveStartPosition(source: VideoSource, explicitPositionMs: Long?): Long {
-        explicitPositionMs?.let { return it.coerceAtLeast(0L) }
+    private fun resolveStartPosition(source: VideoSource): Long {
         val saved = runCatching { cache?.getProgress(source.mediaId) }.getOrNull() ?: return 0L
         val completed = saved.durationMs > 0L &&
             saved.positionMs >= (saved.durationMs - progressPolicy.restartCompletedWithinMs)

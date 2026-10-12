@@ -7,7 +7,9 @@ import android.content.pm.ActivityInfo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -61,7 +63,9 @@ enum class PlayerFullscreenOrientation {
 fun VideoPlayerHost(
     controller: VideoPlayerController,
     source: VideoSource? = null,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
+        .fillMaxWidth()
+        .aspectRatio(16f / 9f),
     presentationController: PlayerPresentationController = rememberPlayerPresentationController(
         capabilities = PlayerPresentationCapabilities(
             fullscreen = true,
@@ -70,7 +74,6 @@ fun VideoPlayerHost(
         ),
     ),
     autoPlay: Boolean = true,
-    startPositionMs: Long? = null,
     uiConfig: VideoPlayerUiConfig = VideoPlayerUiConfig(),
     strings: VideoPlayerStrings = VideoPlayerStrings(),
     colors: VideoPlayerColors = VideoPlayerColors(),
@@ -125,7 +128,6 @@ fun VideoPlayerHost(
             source = source,
             modifier = modifier,
             autoPlay = autoPlay,
-            startPositionMs = startPositionMs,
             uiConfig = uiConfig,
             strings = strings,
             colors = colors,
@@ -138,7 +140,6 @@ fun VideoPlayerHost(
             source = source,
             presentationController = presentationController,
             autoPlay = autoPlay,
-            startPositionMs = startPositionMs,
             uiConfig = uiConfig,
             strings = strings,
             colors = colors,
@@ -162,8 +163,9 @@ fun VideoPlayerHost(
     controller: VideoPlayerController,
     url: String,
     title: String? = null,
-    modifier: Modifier = Modifier,
-    mediaId: String = url,
+    modifier: Modifier = Modifier
+        .fillMaxWidth()
+        .aspectRatio(16f / 9f),
     headers: Map<String, String> = emptyMap(),
     contentCachePolicy: VideoSource.ContentCachePolicy = VideoSource.ContentCachePolicy.AUTO,
     presentationController: PlayerPresentationController = rememberPlayerPresentationController(
@@ -174,7 +176,6 @@ fun VideoPlayerHost(
         ),
     ),
     autoPlay: Boolean = true,
-    startPositionMs: Long? = null,
     uiConfig: VideoPlayerUiConfig = VideoPlayerUiConfig(),
     strings: VideoPlayerStrings = VideoPlayerStrings(),
     colors: VideoPlayerColors = VideoPlayerColors(),
@@ -183,11 +184,10 @@ fun VideoPlayerHost(
     onExternalPresentationRequest: ((PlayerPresentationRequest) -> Unit)? = null,
     overlayContent: @Composable BoxScope.(PlaybackState) -> Unit = {},
 ) {
-    val source = remember(url, title, mediaId, headers, contentCachePolicy) {
+    val source = remember(url, title, headers, contentCachePolicy) {
         VideoSource.network(
             url = url,
             title = title,
-            mediaId = mediaId,
             headers = headers,
             contentCachePolicy = contentCachePolicy,
         )
@@ -198,7 +198,6 @@ fun VideoPlayerHost(
         modifier = modifier,
         presentationController = presentationController,
         autoPlay = autoPlay,
-        startPositionMs = startPositionMs,
         uiConfig = uiConfig,
         strings = strings,
         colors = colors,
@@ -215,7 +214,6 @@ private fun FullscreenVideoPlayer(
     source: VideoSource?,
     presentationController: PlayerPresentationController,
     autoPlay: Boolean,
-    startPositionMs: Long?,
     uiConfig: VideoPlayerUiConfig,
     strings: VideoPlayerStrings,
     colors: VideoPlayerColors,
@@ -252,7 +250,6 @@ private fun FullscreenVideoPlayer(
                 .fillMaxSize()
                 .background(Color.Black),
             autoPlay = autoPlay,
-            startPositionMs = startPositionMs,
             uiConfig = uiConfig,
             strings = strings,
             colors = colors,

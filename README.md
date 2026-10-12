@@ -14,7 +14,7 @@
 | PiP/系统悬浮窗 | 已支持协议 | 宿主负责系统 API、权限和前台 Service |
 | 悬浮窗返回原模式 | 已支持 | 自动记住进入悬浮窗前的页面内或全屏模式 |
 | 网络加载速度 | 已支持 | 准备或缓冲时显示 `B/s`、`KB/s`、`MB/s` |
-| 播放进度持久化 | 已支持 | 按稳定 `mediaId` 自动恢复并节流保存，双内核共用 |
+| 播放进度持久化 | 已支持 | 根据来源类型与 URI 自动生成稳定 ID，自动恢复并节流保存，双内核共用 |
 | 网络内容缓存 | 已支持 | 渐进式文件边播边存、按 Range 分段复用，Media3/Ijk 共用 |
 | 自定义弹幕覆盖层 | 已预留 | 使用 `overlayContent` slot，页面内和全屏共用，详见 [EXTENDING.md](EXTENDING.md) |
 | MediaSession/音频焦点 | 尚未内置 | 建议由后续后台播放模块统一接入 |
@@ -60,12 +60,12 @@ dependencyResolutionManagement {
 ```kotlin
 dependencies {
     implementation(
-        "com.github.onyou668.video-mobile-player:player-compose:v0.2.0",
+        "com.github.onyou668.video-mobile-player:player-compose:v0.3.0",
     )
 }
 ```
 
-正式发布使用不可变 Git 标签。Flutter/React Native 插件的 `v0.2.0` submodule 固定到主库 `v0.2.0` 对应提交；主库升级后，插件必须先更新 submodule 并通过 CI，再发布自己的新 tag。调用方只依赖 Android、Flutter 或 React Native 对应仓库的 tag，不依赖开发分支。
+正式发布使用不可变 Git 标签。Flutter/React Native 插件的 `v0.3.0` submodule 固定到主库 `v0.3.0` 对应提交；主库升级后，插件必须先更新 submodule 并通过 CI，再发布自己的新 tag。调用方只依赖 Android、Flutter 或 React Native 对应仓库的 tag，不依赖开发分支。
 
 网络权限会从播放器内核 AAR 的 manifest 合并到宿主。HTTP 明文地址仍需宿主根据安全策略配置 `networkSecurityConfig`，生产环境建议使用 HTTPS。
 
@@ -83,13 +83,11 @@ fun PlayerWindow(
         controller = controller,
         url = video.url,
         title = video.title,
-        mediaId = video.id,
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(16f / 9f),
     )
 }
 ```
+
+默认 `modifier` 会占满可用宽度并按 16:9 计算高度，适合放在详情页顶部。宿主有其他画幅时可以传自己的 `Modifier` 覆盖；进入全屏后组件始终使用整个窗口，不受页面内尺寸约束。
 
 宿主也可以让 Controller 成为唯一的视频源状态。此时 Host 不传 `source/url`，宿主的任意业务操作都可以直接切换播放地址或内核：
 
@@ -106,7 +104,6 @@ class HostPlayerViewModel(application: Application) : AndroidViewModel(applicati
             VideoSource.network(
                 url = video.url,
                 title = video.title,
-                mediaId = video.id,
             ),
         )
     }
@@ -121,9 +118,6 @@ class HostPlayerViewModel(application: Application) : AndroidViewModel(applicati
 fun PlayerWindow(viewModel: HostPlayerViewModel) {
     VideoPlayerHost(
         controller = viewModel.player,
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(16f / 9f),
     )
 }
 ```
@@ -132,7 +126,7 @@ fun PlayerWindow(viewModel: HostPlayerViewModel) {
 
 | 调用 | 用途 |
 | --- | --- |
-| `setMedia(source, playWhenReady, startPositionMs)` | 切换播放地址、标题和业务资源 ID |
+| `setMedia(source, playWhenReady)` | 切换播放地址和标题，并自动恢复该资源的进度 |
 | `play()` / `pause()` / `togglePlayPause()` | 播放控制 |
 | `seekTo()` / `seekBy()` | 进度控制 |
 | `switchEngine()` | 外部切换 Media3/Ijk，保留当前进度和播放意图 |
@@ -148,7 +142,6 @@ fun PlayerWindow(viewModel: HostPlayerViewModel) {
 ```kotlin
 val source = VideoSource.network(
     url = "https://example.com/video.m3u8",
-    mediaId = "episode-42",
     headers = mapOf(
         "Authorization" to "Bearer token",
         "Referer" to "https://example.com/",
@@ -164,7 +157,6 @@ Media3 支持普通文件、HLS 和 DASH。IjkPlayer 实际支持的封装格式
 ```kotlin
 val live = VideoSource.network(
     url = "https://example.com/opaque-live-url",
-    mediaId = "live-channel-1",
     contentCachePolicy = VideoSource.ContentCachePolicy.DISABLED,
 )
 ```
@@ -176,14 +168,13 @@ val live = VideoSource.network(
 ```kotlin
 val source = VideoSource.local(
     uri = selectedUri.toString(),
-    mediaId = "local-video-42",
     title = "Local video",
 )
 ```
 
 如果 App 重启后仍要访问该 URI，选择文件时需要调用 `takePersistableUriPermission`。播放器库不会主动申请广泛存储权限。
 
-`mediaId` 是进度和内容缓存的稳定键。业务有自己的视频 ID 时应显式传入；未传时默认使用 URI。
+调用方不传 `mediaId`。播放器使用“来源类型 + 完整 URI”的 SHA-256 自动生成稳定、不透明的 `mediaId`，标题和请求头变化不会改变它。相同 URI 在 App 重启后仍会命中同一份进度和网络内容缓存；URL 本身变化则视为新资源。
 
 ## 播放进度与内容缓存
 
@@ -226,21 +217,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
 宿主在 `<application android:networkSecurityConfig="@xml/network_security_config">` 中引用该文件；已有配置时只合并上述 domain，不要替换其他证书或域名策略。
 
-播放一个资源时的起始进度优先级固定为：
-
-1. 调用方显式传入的 `startPositionMs`；传 `0L` 表示强制从头播放。
-2. `VideoPlayerCache` 中该 `mediaId` 的已保存进度。
-3. 没有记录时从 `0L` 开始。
-
-```kotlin
-player.setMedia(source, startPositionMs = 30_000L)
-
-VideoPlayer(
-    controller = player,
-    source = source,
-    startPositionMs = 30_000L,
-)
-```
+加载资源时，Controller 自动读取 `VideoPlayerCache` 中生成 ID 对应的进度；没有记录时从 `0L` 开始。调用方不传起始进度，播放过程中的主动跳转仍使用 `seekTo()`/`seekBy()`。
 
 Controller 在播放过程中每 5 秒节流保存一次，并在暂停、Seek、切换资源、切换内核、宿主停止和关闭时强制保存。Media3 与 IjkPlayer 始终读取同一个 Controller 状态和同一个 `mediaId` 记录，不会产生两份进度。接近视频结尾 5 秒的记录默认视为已播完，下次从头开始；可通过 `PlaybackProgressPolicy` 调整。
 
@@ -275,7 +252,7 @@ filesDir/video-mobile-player-cache/
     *.part
 ```
 
-`mediaId` 必须稳定且代表同一份不可变媒体内容。签名 URL 或鉴权 Header 更新时可以继续使用原 `mediaId`；如果视频内容本身更新，必须更换 `mediaId` 或先调用 `remove(mediaId)`，否则旧分段可能被复用。上游服务器需要正确支持 HTTP Range/`206 Partial Content`；不支持时应将 `contentCachePolicy` 设为 `DISABLED` 直连播放。
+自动生成的 `mediaId` 代表来源类型与完整 URI。鉴权 Header 或标题更新不会改变 ID；签名参数等 URL 内容变化会生成新 ID，旧缓存可通过原 `VideoSource.mediaId` 删除。如果同一 URL 返回了新内容，代理会根据长度和上游校验信息使旧分段失效。上游服务器需要正确支持 HTTP Range/`206 Partial Content`；不支持时应将 `contentCachePolicy` 设为 `DISABLED` 直连播放。
 
 HLS/DASH、本地文件和显式禁用缓存的网络源都只参与进度保存，不会写入媒体分段。`cacheMedia()` 是可选的整文件离线预取入口，仍复用同一套分段；普通边播边存不需要预先调用它。
 
@@ -305,7 +282,7 @@ Text("speed=${state.networkSpeedBytesPerSecond} B/s")
 
 切换 Media3/Ijk 时会恢复当前视频源、进度、播放意图、音量和倍速。切核需要释放旧内核并重新准备新内核，因此会有一次短暂的 `PREPARING/BUFFERING`，不是无缝解码器热切换。
 
-`setMedia()` 会重新加载，并按“显式进度 -> 缓存进度 -> 0”的顺序决定起点；可重复创建的 UI 容器应使用 `setMediaIfChanged()`。`VideoPlayer` 内部已经使用后者，因此横竖屏、全屏和悬浮容器迁移不会重置相同视频。
+`setMedia()` 会重新加载，并按“缓存进度 -> 0”的顺序决定起点；可重复创建的 UI 容器应使用 `setMediaIfChanged()`。`VideoPlayer` 内部已经使用后者，因此横竖屏、全屏和悬浮容器迁移不会重置相同视频。
 
 ## Controller 生命周期
 

@@ -84,10 +84,7 @@ class ProgressiveMediaProxyTest {
         }
         RangeServer(content).use { upstream ->
             withTempDirectory { directory ->
-                val source = VideoSource.network(
-                    url = upstream.url,
-                    mediaId = "movie-42",
-                )
+                val source = VideoSource.network(url = upstream.url)
                 val firstStart = 100L
                 val firstEnd = 199L
                 val secondStart = segmentSize + 10L
