@@ -26,8 +26,6 @@ data class VideoPlayerStrings(
     val retry: String = "Retry",
     val fullscreen: String = "Fullscreen",
     val portrait: String = "Return to portrait player",
-    val minimize: String = "Minimize player",
-    val close: String = "Close player",
     val playbackSpeed: String = "Playback speed",
     val switchEngine: String = "Switch playback engine",
     val loading: String = "Loading",
