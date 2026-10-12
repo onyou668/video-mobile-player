@@ -27,9 +27,11 @@ The old adapter cannot publish stale callbacks after replacement because the con
 
 ## Cache boundary
 
-`AppPrivateVideoPlayerCache` is the bundled adapter. It stores progress records separately from complete network media files. Local sources participate in progress persistence but bypass content caching. A complete cached network file is resolved to one local URI before an engine is prepared, allowing Media3 and IjkPlayer to consume the same bytes.
+`AppPrivateVideoPlayerCache` is the bundled adapter. It stores progress records separately from progressive network byte ranges. Local sources and HLS/DASH manifests participate in progress persistence but bypass content caching. Before an engine is prepared, a supported network source is resolved to a loopback HTTP URL owned by one process-local `ProgressiveMediaProxy`; Media3 and IjkPlayer therefore consume the same cached bytes.
 
-The bundled media adapter intentionally handles progressive single-file downloads. HLS/DASH segment caching, encrypted downloads, or a local streaming proxy belong behind another `VideoPlayerCache` adapter; none of those details enter `VideoPlayerController` or an engine interface.
+The proxy binds only to `127.0.0.1` and uses an unguessable per-process path token. It divides upstream content into fixed 512 KiB segments under `filesDir/video-mobile-player-cache/<sha256(mediaId)>`. A cached segment is served from disk. A missing segment is requested upstream with HTTP Range, streamed to the player while it is written to a `.part` file, then promoted to `.segment` after its length is verified. Seeking naturally requests and stores a different segment. Cache size enforcement is LRU at segment granularity.
+
+`mediaId` is the immutable content identity; URL and authorization headers are transport details and may rotate without changing the cache key. The adapter persists upstream length and validators in `metadata.json`, rejects servers that do not honor byte ranges, and invalidates segment data when a fetched range proves that the upstream identity changed. HLS/DASH segment caching and encrypted/offline license management remain outside the bundled adapter; callers can disable content caching per source or inject another `VideoPlayerCache` adapter without changing the controller or an engine interface.
 
 ## Presentation boundary
 

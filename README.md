@@ -15,7 +15,7 @@
 | 悬浮窗返回原模式 | 已支持 | 自动记住进入悬浮窗前的页面内或全屏模式 |
 | 网络加载速度 | 已支持 | 准备或缓冲时显示 `B/s`、`KB/s`、`MB/s` |
 | 播放进度持久化 | 已支持 | 按稳定 `mediaId` 自动恢复并节流保存，双内核共用 |
-| 网络内容缓存 | 已支持 | 完整文件缓存供 Media3/Ijk 共用；本地资源不重复缓存 |
+| 网络内容缓存 | 已支持 | 渐进式文件边播边存、按 Range 分段复用，Media3/Ijk 共用 |
 | 自定义弹幕覆盖层 | 可扩展 | 使用 Compose `Box` 叠加，详见 [EXTENDING.md](EXTENDING.md) |
 | MediaSession/音频焦点 | 尚未内置 | 建议由后续后台播放模块统一接入 |
 | Maven 发布 | 已配置 | 支持 JitPack 多模块坐标，也可同工程 `project` 依赖 |
@@ -115,6 +115,16 @@ val source = VideoSource.network(
 
 Media3 支持普通文件、HLS 和 DASH。IjkPlayer 实际支持的封装格式与编解码能力由当前 Ijk 构建决定。
 
+已知的 `.m3u8`/`.mpd` 地址会自动绕过内容缓存。如果 HLS/DASH 地址没有标准扩展名，应显式关闭内容缓存，播放进度仍会正常保存：
+
+```kotlin
+val live = VideoSource.network(
+    url = "https://example.com/opaque-live-url",
+    mediaId = "live-channel-1",
+    contentCachePolicy = VideoSource.ContentCachePolicy.DISABLED,
+)
+```
+
 ### 本地视频
 
 优先使用 Photo Picker 或 Storage Access Framework 返回的 `content://` URI：
@@ -133,14 +143,20 @@ val source = VideoSource.local(
 
 ## 播放进度与内容缓存
 
-缓存通过 `VideoPlayerCache` 接口注入 Controller。默认的 `AppPrivateVideoPlayerCache` 将进度保存在应用私有 `SharedPreferences`，将完整网络文件放在应用私有缓存目录；卸载 App 后这些数据都会被系统移除。
+缓存通过 `VideoPlayerCache` 接口注入 Controller。默认的 `AppPrivateVideoPlayerCache` 将进度保存在应用私有 `SharedPreferences`，将网络视频分段放在应用私有 `filesDir`。这些文件不会被 Android 当作临时缓存自动清理；调用 `remove()`/`clear()`、清除 App 数据或卸载 App 时才会丢失，超过配置上限时按最近最少使用的分段淘汰。
 
 ```kotlin
+class PlayerApplication : Application() {
+    val videoPlayerCache by lazy {
+        AppPrivateVideoPlayerCache(
+            context = this,
+            maxMediaCacheBytes = 512L * 1024L * 1024L,
+        )
+    }
+}
+
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
-    val cache = AppPrivateVideoPlayerCache(
-        context = application,
-        maxMediaCacheBytes = 512L * 1024L * 1024L,
-    )
+    val cache = (application as PlayerApplication).videoPlayerCache
 
     val player = createDefaultVideoPlayerController(
         context = application,
@@ -149,6 +165,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     )
 }
 ```
+
+同一个进程通常只创建一个 `AppPrivateVideoPlayerCache`，并注入所有 Controller。它在首次播放可缓存网络文件时启动只监听 `127.0.0.1` 的本地 HTTP Range 代理；Media3 和 IjkPlayer 获得同一个代理地址，因此缓存不属于某个播放器内核。
+
+本地代理使用 HTTP loopback。如果宿主的网络安全策略禁止全部明文流量，需要在宿主现有的 Network Security Config 中仅放行 `127.0.0.1`，不要为所有域名开启明文 HTTP：
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
+```
+
+宿主在 `<application android:networkSecurityConfig="@xml/network_security_config">` 中引用该文件；已有配置时只合并上述 domain，不要替换其他证书或域名策略。
 
 播放一个资源时的起始进度优先级固定为：
 
@@ -177,6 +209,7 @@ cache.saveProgress(
 )
 
 viewModelScope.launch {
+    // 可选：显式预取完整渐进式文件；普通播放不需要调用。
     player.cacheMedia(source) { download ->
         val fraction = download.fraction
     }
@@ -185,7 +218,22 @@ viewModelScope.launch {
 }
 ```
 
-本地 `content://`/文件资源只保存播放进度，不复制视频内容。网络内容缓存是显式的完整文件预缓存：完成后下一次加载会自动换成本地 URI，因此 Media3 和 IjkPlayer 都能使用同一份文件。默认实现适合 MP4 等渐进式单文件，不缓存 HLS/DASH 的分片；这类协议可以实现自定义 `VideoPlayerCache` adapter。
+本地 `content://`/文件资源只保存播放进度，不复制视频内容。普通网络 MP4 等渐进式单文件在播放时自动经过读穿代理：命中的 512 KiB 分段直接从本地读取，缺失分段通过上游 HTTP Range 请求边传给播放器边写入磁盘。拖动到未缓存位置时只下载新位置对应的分段；再次打开时已有分段可直接播放，缺失部分继续从网络补齐。
+
+默认目录规则如下，业务不应直接依赖或修改内部文件：
+
+```text
+filesDir/video-mobile-player-cache/
+  <sha256(mediaId)>/
+    metadata.json
+    000000000000.segment
+    000000000001.segment
+    *.part
+```
+
+`mediaId` 必须稳定且代表同一份不可变媒体内容。签名 URL 或鉴权 Header 更新时可以继续使用原 `mediaId`；如果视频内容本身更新，必须更换 `mediaId` 或先调用 `remove(mediaId)`，否则旧分段可能被复用。上游服务器需要正确支持 HTTP Range/`206 Partial Content`；不支持时应将 `contentCachePolicy` 设为 `DISABLED` 直连播放。
+
+HLS/DASH、本地文件和显式禁用缓存的网络源都只参与进度保存，不会写入媒体分段。`cacheMedia()` 是可选的整文件离线预取入口，仍复用同一套分段；普通边播边存不需要预先调用它。
 
 ## 播放控制与状态
 

@@ -14,7 +14,7 @@ data class PlaybackProgress(
     }
 }
 
-/** Download progress reported while a network resource is copied into the cache. */
+/** Progress reported by an explicit full-resource prefetch. */
 data class MediaCacheProgress(
     val mediaId: String,
     val bytesCached: Long,
@@ -30,18 +30,19 @@ data class MediaCacheProgress(
  * Engine-neutral cache seam used by [VideoPlayerController].
  *
  * Implementations store small progress records synchronously and must keep
- * those operations fast. Media downloads are suspend functions. Local sources
- * are returned unchanged and never copied into the media cache.
+ * those operations fast. Source resolution may return a read-through local
+ * proxy that persists only the byte ranges requested by an engine. Local
+ * sources and segmented streaming manifests must bypass content caching.
  */
 interface VideoPlayerCache {
     fun getProgress(mediaId: String): PlaybackProgress?
 
     fun saveProgress(progress: PlaybackProgress)
 
-    /** Returns a complete local cached source, or null when it is not cached. */
+    /** Returns an engine-neutral cached playback source, or null to use [source]. */
     fun getCachedSource(source: VideoSource): VideoSource?
 
-    /** Caches a network source completely and returns its local source. */
+    /** Explicitly prefetches a supported progressive resource into the cache. */
     suspend fun cache(
         source: VideoSource,
         onProgress: (MediaCacheProgress) -> Unit = {},

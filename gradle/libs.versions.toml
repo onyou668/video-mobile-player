@@ -8,6 +8,7 @@ coroutines = "1.10.2"
 media3 = "1.8.0"
 ijk = "0.0.16"
 junit = "4.13.2"
+json = "20260814"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -26,6 +27,7 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 ijkplayer-java = { group = "io.github.blankyn", name = "ijkplayer-java", version.ref = "ijk" }
 ijkplayer-native = { group = "io.github.blankyn", name = "ijkplayer-ex_so", version.ref = "ijk" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+json = { group = "org.json", name = "json", version.ref = "json" }
 
 [plugins]
 android-library = { id = "com.android.library", version.ref = "agp" }

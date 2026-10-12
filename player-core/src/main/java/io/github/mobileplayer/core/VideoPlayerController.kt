@@ -96,7 +96,7 @@ class VideoPlayerController(
         return true
     }
 
-    /** Downloads a network source for engine-independent playback on a later load. */
+    /** Explicitly prefetches a supported network source into the shared cache. */
     suspend fun cacheMedia(
         source: VideoSource,
         onProgress: (MediaCacheProgress) -> Unit = {},

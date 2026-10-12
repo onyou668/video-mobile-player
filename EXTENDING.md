@@ -38,6 +38,7 @@ MobilePlayer 将播放、展示和 UI 分为三个独立模块：
 | 系统悬浮窗 | 前台 Service + WindowManager Adapter | 否 |
 | 通知栏/锁屏控制 | MediaSession + 前台 Service | 否 |
 | 新播放器内核 | `PlaybackEngine` Adapter | 需要注册类型与工厂 |
+| 自定义进度/内容缓存 | `VideoPlayerCache` Adapter | 否 |
 | 新的统一播放状态 | `EnginePlaybackState`/`PlaybackState` | 是 |
 | 完全替换内置控制 UI | 新增公开 Compose UI slot/Surface 接口 | 当前需要修改 `player-compose` |
 
@@ -139,6 +140,22 @@ Box {
 5. 失败则调用 `rejectPendingRequest(message)`。
 
 不要在 `PlaybackEngine` 中调用 `requestedOrientation` 或 WindowInsets API。这些行为与解码无关，也会阻止内核在 Service 或测试环境中复用。
+
+## 自定义缓存 Adapter
+
+`VideoPlayerCache` 是播放进度和内容缓存的统一 seam，但两类数据在 Implementation 内应保持独立：进度是按 `mediaId` 保存的小记录，媒体内容是可淘汰的大文件。Controller 只负责恢复/保存时机和解析播放源，具体内核不应直接访问缓存。
+
+自定义 Adapter 必须保持以下语义：
+
+- `getProgress()`/`saveProgress()` 必须快速且同步，不能在主线程执行网络请求。
+- `getCachedSource()` 可以返回本地文件或读穿代理 URL；返回 `null` 表示原源直连。
+- 同一个 `mediaId` 在 Media3/Ijk 切换前后必须解析到同一份缓存内容。
+- 本地 URI 不应被复制；HLS/DASH 默认不应进入渐进式文件缓存。
+- `remove(mediaId)` 同时删除该资源的进度和内容，`clear()` 删除全部。
+- 鉴权信息只能发给可信上游，不能写入文件名、日志或持久化元数据。
+- 磁盘写入应先落临时文件并校验，再原子替换可用文件。
+
+内置 Adapter 使用 512 KiB Range 分段与 loopback 代理，适合支持 `206 Partial Content` 的 MP4 等单文件。需要 HLS 离线、DRM 下载、跨账号隔离或自定义加密时，应替换整个 `VideoPlayerCache` Adapter，而不是在两个 `PlaybackEngine` Adapter 中分别实现。
 
 ## PiP 与系统悬浮窗 Adapter
 

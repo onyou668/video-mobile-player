@@ -79,7 +79,7 @@ class VideoPlayerControllerTest {
     }
 
     @Test
-    fun completeNetworkCacheIsSharedAcrossEngineSwitches() = runTest {
+    fun resolvedCacheSourceIsSharedAcrossEngineSwitches() = runTest {
         val source = VideoSource.network(
             url = "https://example.com/movie.mp4",
             mediaId = "cached-movie",
