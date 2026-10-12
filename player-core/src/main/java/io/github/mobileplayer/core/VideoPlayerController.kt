@@ -20,8 +20,9 @@ class VideoPlayerController(
     factories: Map<PlayerEngineType, PlaybackEngineFactory>,
     private val scope: CoroutineScope,
     private val cache: VideoContentCache? = null,
-    private val ownedCache: AutoCloseable? = null,
+    ownedCache: AutoCloseable? = null,
 ) : AutoCloseable {
+    private val ownedCache = ownedCache
     private val factories = factories.toMap()
     private val mutableState = MutableStateFlow(PlaybackState(engineType = initialEngine))
 
