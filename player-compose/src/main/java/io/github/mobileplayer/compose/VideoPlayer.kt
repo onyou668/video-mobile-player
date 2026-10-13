@@ -1,8 +1,7 @@
 package io.github.mobileplayer.compose
 
-import android.graphics.SurfaceTexture
-import android.view.Surface
-import android.view.TextureView
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -256,35 +255,20 @@ private fun VideoSurface(
 ) {
     AndroidView(
         factory = { context ->
-            TextureView(context).apply {
-                var videoSurface: Surface? = null
-                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                    override fun onSurfaceTextureAvailable(
-                        surfaceTexture: SurfaceTexture,
-                        width: Int,
-                        height: Int,
-                    ) {
-                        videoSurface = Surface(surfaceTexture)
-                        controller.setSurface(videoSurface)
+            SurfaceView(context).apply {
+                holder.addCallback(object : SurfaceHolder.Callback {
+                    override fun surfaceCreated(holder: SurfaceHolder) {
+                        controller.setSurface(holder.surface)
                     }
 
-                    override fun onSurfaceTextureSizeChanged(
-                        surfaceTexture: SurfaceTexture,
-                        width: Int,
-                        height: Int,
-                    ) {
-                        controller.setSurface(videoSurface)
+                    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                        controller.setSurface(holder.surface)
                     }
 
-                    override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
-                        videoSurface?.let(controller::clearSurface)
-                        videoSurface?.release()
-                        videoSurface = null
-                        return true
+                    override fun surfaceDestroyed(holder: SurfaceHolder) {
+                        controller.clearSurface(holder.surface)
                     }
-
-                    override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) = Unit
-                }
+                })
             }
         },
         modifier = modifier.fitInside(aspectRatio),
