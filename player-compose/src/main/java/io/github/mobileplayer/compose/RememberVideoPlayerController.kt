@@ -6,70 +6,77 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
-import io.github.mobileplayer.core.PlaybackEngineFactory
-import io.github.mobileplayer.core.PlayerEngineType
+import io.github.mobileplayer.core.AndroidPlayerEnvironment
 import io.github.mobileplayer.core.AppPrivateVideoPlayerCache
-import io.github.mobileplayer.core.VideoContentCache
+import io.github.mobileplayer.core.PlaybackEngineProvider
+import io.github.mobileplayer.core.PlayerController
+import io.github.mobileplayer.core.PlayerEngineId
 import io.github.mobileplayer.core.VideoCacheConfig
-import io.github.mobileplayer.core.VideoPlayerController
-import io.github.mobileplayer.ijk.IjkPlaybackEngineFactory
-import io.github.mobileplayer.media3.Media3PlaybackEngineFactory
+import io.github.mobileplayer.core.VideoContentCache
+import io.github.mobileplayer.core.createPlayerController
+import io.github.mobileplayer.ijk.IjkPlaybackEngineProvider
+import io.github.mobileplayer.media3.Media3PlaybackEngineProvider
 import kotlinx.coroutines.CoroutineScope
 import java.io.File
 
-/**
- * Creates a controller whose lifetime is owned by the caller. Use this from a
- * ViewModel or foreground service when playback must survive UI migration.
- */
-fun createDefaultVideoPlayerController(
+fun createDefaultPlayerController(
     context: Context,
     scope: CoroutineScope,
-    initialEngine: PlayerEngineType = PlayerEngineType.MEDIA3,
+    initialEngineId: PlayerEngineId = PlayerEngineId.MEDIA3,
+    additionalEngineProviders: List<PlaybackEngineProvider> = emptyList(),
     cache: VideoContentCache? = null,
     cacheConfig: VideoCacheConfig = VideoCacheConfig(),
     cacheDirectory: File? = null,
-): VideoPlayerController {
+): PlayerController {
     val appContext = context.applicationContext
     val effectiveCache = cache ?: AppPrivateVideoPlayerCache(
         context = appContext,
         config = cacheConfig,
         cacheDirectory = cacheDirectory,
     )
-    return VideoPlayerController(
-        initialEngine = initialEngine,
-        factories = mapOf<PlayerEngineType, PlaybackEngineFactory>(
-            PlayerEngineType.MEDIA3 to Media3PlaybackEngineFactory(appContext),
-            PlayerEngineType.IJK to IjkPlaybackEngineFactory(appContext),
-        ),
+    val providers = listOf(
+        Media3PlaybackEngineProvider(appContext),
+        IjkPlaybackEngineProvider(appContext),
+    ) + additionalEngineProviders
+    return createPlayerController(
+        initialEngineId = initialEngineId,
+        engineProviders = providers,
         scope = scope,
         cache = effectiveCache,
-        ownedCache = if (cache == null) effectiveCache as AutoCloseable else null,
+        environment = AndroidPlayerEnvironment(context),
+        ownedResources = if (cache == null) listOf(effectiveCache as AutoCloseable) else emptyList(),
     )
 }
 
-/** Creates and owns a controller configured with both bundled playback engines. */
 @Composable
-fun rememberVideoPlayerController(
-    initialEngine: PlayerEngineType = PlayerEngineType.MEDIA3,
+fun rememberPlayerController(
+    initialEngineId: PlayerEngineId = PlayerEngineId.MEDIA3,
+    additionalEngineProviders: List<PlaybackEngineProvider> = emptyList(),
     cache: VideoContentCache? = null,
     cacheConfig: VideoCacheConfig = VideoCacheConfig(),
     cacheDirectory: File? = null,
-): VideoPlayerController {
-    val context = LocalContext.current.applicationContext
+): PlayerController {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val controller = remember(initialEngine, context, scope, cache, cacheConfig, cacheDirectory) {
-        createDefaultVideoPlayerController(
+    val controller = remember(
+        initialEngineId,
+        context,
+        scope,
+        additionalEngineProviders,
+        cache,
+        cacheConfig,
+        cacheDirectory,
+    ) {
+        createDefaultPlayerController(
             context = context,
             scope = scope,
-            initialEngine = initialEngine,
+            initialEngineId = initialEngineId,
+            additionalEngineProviders = additionalEngineProviders,
             cache = cache,
             cacheConfig = cacheConfig,
             cacheDirectory = cacheDirectory,
         )
     }
-
-    DisposableEffect(controller) {
-        onDispose(controller::close)
-    }
+    DisposableEffect(controller) { onDispose(controller::close) }
     return controller
 }

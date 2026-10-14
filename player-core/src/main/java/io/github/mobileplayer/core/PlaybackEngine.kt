@@ -3,26 +3,30 @@ package io.github.mobileplayer.core
 import android.view.Surface
 import kotlinx.coroutines.flow.StateFlow
 
-/** State emitted by an individual engine adapter. */
+/** State emitted by one engine adapter and normalized by the controller. */
 data class EnginePlaybackState(
-    val status: PlaybackStatus = PlaybackStatus.IDLE,
+    val phase: PlaybackPhase = PlaybackPhase.IDLE,
     val isPlaying: Boolean = false,
-    val positionMs: Long = 0L,
-    val durationMs: Long = 0L,
-    val bufferedPositionMs: Long = 0L,
-    val networkSpeedBytesPerSecond: Long = 0L,
-    val videoWidth: Int = 0,
-    val videoHeight: Int = 0,
+    val hasRenderedFirstFrame: Boolean = false,
+    val timeline: PlayerTimeline = PlayerTimeline(),
+    val media: MediaInfo = MediaInfo(),
+    val tracks: PlayerTracks = PlayerTracks(),
+    val subtitleCues: List<PlayerSubtitleCue> = emptyList(),
+    val network: PlayerNetworkState = PlayerNetworkState(),
+    val capabilities: PlayerCapabilities = PlayerCapabilities(),
+    val metrics: PlayerMetrics = PlayerMetrics(),
+    val endReason: PlaybackEndReason? = null,
     val error: PlaybackError? = null,
 )
 
-/** Small adapter boundary implemented once for every playback SDK. */
+/** Adapter seam implemented once for every playback SDK. */
 interface PlaybackEngine {
     val state: StateFlow<EnginePlaybackState>
 
     fun setSurface(surface: Surface?)
 
-    fun prepare(source: VideoSource, playWhenReady: Boolean, startPositionMs: Long = 0L)
+    /** Prepares media only. Playback starts exclusively through [play]. */
+    fun prepare(source: VideoSource, startPositionMs: Long = 0L)
 
     fun play()
 
@@ -30,13 +34,15 @@ interface PlaybackEngine {
 
     fun seekTo(positionMs: Long)
 
-    fun setVolume(volume: Float)
+    fun setPlayerVolume(volume: Float)
 
     fun setPlaybackSpeed(speed: Float)
 
-    fun release()
-}
+    fun selectTrack(type: TrackType, trackId: String?) = Unit
 
-fun interface PlaybackEngineFactory {
-    fun create(): PlaybackEngine
+    fun setSubtitlesEnabled(enabled: Boolean) = Unit
+
+    fun goToLiveEdge() = Unit
+
+    fun release()
 }
