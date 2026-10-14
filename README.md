@@ -53,9 +53,7 @@ ContainedVideoPlayer(
 )
 ```
 
-<p align="center">
-  <img src="docs/assets/player-compose/mobile-player-contained.png" alt="ContainedVideoPlayer 播放效果" width="360" />
-</p>
+![ContainedVideoPlayer 播放效果](docs/assets/player-compose/mobile-player-contained.png)
 
 ### ExpandableVideoPlayer
 
@@ -76,26 +74,28 @@ ExpandableVideoPlayer(
 
 页面内播放：
 
-<p align="center">
-  <img src="docs/assets/player-compose/mobile-player-expandable-inline.png" alt="ExpandableVideoPlayer 页面内播放效果" width="480" />
-</p>
+![ExpandableVideoPlayer 页面内播放效果](docs/assets/player-compose/mobile-player-expandable-inline.png)
 
 横向沉浸式全屏：
 
-<p align="center">
-  <img src="docs/assets/player-compose/mobile-player-expandable-fullscreen.png" alt="ExpandableVideoPlayer 横向全屏效果" width="900" />
-</p>
+![ExpandableVideoPlayer 横向全屏效果](docs/assets/player-compose/mobile-player-expandable-fullscreen.png)
 
 ### VideoPlayer
 
-`VideoPlayer` 是不带默认视觉的原始播放宿主。它只提供视频画面，并通过唯一的内容插槽暴露只读 `PlayerScope`；自定义 UI 只能读取状态和调用 `scope.actions`：
+`VideoPlayer` 是不带默认视觉的原始播放宿主。`content` 非必填；不传时只渲染视频画面：
 
 ```kotlin
 VideoPlayer(
     controller = player,
     url = videoUrl,
     modifier = Modifier.fillMaxSize(),
-) { scope ->
+)
+```
+
+需要自定义 UI 时，通过 `content` 获取只读 `PlayerScope`。自定义 UI 只能读取状态和调用 `scope.actions`：
+
+```kotlin
+VideoPlayer(controller = player, url = videoUrl) { scope ->
     MyPlayerUi(
         state = scope.state,
         onPlay = scope.actions.play,
